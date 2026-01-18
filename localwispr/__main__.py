@@ -11,6 +11,7 @@ from scipy.io import wavfile
 from localwispr import __version__
 from localwispr.audio import AudioRecorder, AudioRecorderError
 from localwispr.config import load_config
+from localwispr.transcribe import WhisperTranscriber
 
 
 def print_banner() -> None:
@@ -137,6 +138,102 @@ def record_test(output_file: str | None = None) -> int:
         return 1
 
 
+def transcribe_test(model_name: str | None = None) -> int:
+    """Test transcription functionality.
+
+    Records audio until the user presses Enter, then transcribes it
+    using Whisper and displays the results with timing information.
+
+    Args:
+        model_name: Optional model name to override config default.
+
+    Returns:
+        Exit code: 0 for success, 1 for error.
+    """
+    print("Transcription Test")
+    print("=" * 40)
+
+    # Load config and show model info
+    config = load_config()
+    actual_model = model_name or config["model"]["name"]
+    print(f"Model:        {actual_model}")
+    print(f"Device:       {config['model']['device']}")
+    print(f"Compute Type: {config['model']['compute_type']}")
+    print()
+
+    try:
+        # Initialize transcriber (lazy load)
+        print("Initializing transcriber...")
+        transcriber = WhisperTranscriber(model_name=model_name)
+
+        # Initialize recorder
+        recorder = AudioRecorder()
+        print(f"Audio Device: {recorder.device_name}")
+        print(f"Sample Rate:  {recorder.sample_rate} Hz")
+        print()
+
+        # Start recording
+        print("Recording... Press Enter to stop and transcribe")
+        print()
+        recorder.start_recording()
+
+        # Wait for Enter key
+        try:
+            input()
+        except EOFError:
+            pass
+
+        # Get audio (stops recording)
+        print("Processing...")
+        audio = recorder.get_whisper_audio()
+        audio_duration = len(audio) / 16000.0
+
+        if audio_duration < 0.1:
+            print("No audio captured. Make sure your microphone is working.")
+            return 1
+
+        print(f"Audio Duration: {audio_duration:.2f} seconds")
+        print()
+
+        # Load model if not loaded (shows progress)
+        if not transcriber.is_loaded:
+            print(f"Loading model '{transcriber.model_name}'...")
+            print("(This may take a moment on first run as the model downloads)")
+            # Force model load
+            _ = transcriber.model
+            print("Model loaded!")
+            print()
+
+        # Transcribe
+        print("Transcribing...")
+        result = transcriber.transcribe(audio)
+
+        # Display results
+        print()
+        print("Results")
+        print("-" * 40)
+        print(f"Text: {result.text}")
+        print()
+        print(f"Audio Duration:  {result.audio_duration:.2f}s")
+        print(f"Inference Time:  {result.inference_time:.2f}s")
+        print(f"Real-time Factor: {result.inference_time / result.audio_duration:.2f}x")
+
+        # Check latency target
+        if result.inference_time < 2.0:
+            print(f"Latency Target:  ✅ PASS (<2s)")
+        else:
+            print(f"Latency Target:  ⚠️  {result.inference_time:.2f}s (target: <2s)")
+
+        return 0
+
+    except AudioRecorderError as e:
+        print(f"Audio Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def run_default() -> None:
     """Run the default LocalWispr startup display."""
     print_banner()
@@ -173,10 +270,23 @@ def main() -> None:
         help="Save recorded audio to WAV file",
     )
 
+    # transcribe-test subcommand
+    transcribe_test_parser = subparsers.add_parser(
+        "transcribe-test",
+        help="Test transcription functionality",
+    )
+    transcribe_test_parser.add_argument(
+        "-m", "--model",
+        metavar="MODEL",
+        help="Model name to use (overrides config)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "record-test":
         sys.exit(record_test(args.output))
+    elif args.command == "transcribe-test":
+        sys.exit(transcribe_test(args.model))
     else:
         # Default behavior: show startup info
         run_default()
