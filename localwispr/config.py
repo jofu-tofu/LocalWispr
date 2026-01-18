@@ -2,10 +2,24 @@
 
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 
-DEFAULT_CONFIG: dict[str, Any] = {
+class ModelConfig(TypedDict):
+    """Model configuration settings."""
+
+    name: str
+    device: str
+    compute_type: str
+
+
+class Config(TypedDict):
+    """Full application configuration."""
+
+    model: ModelConfig
+
+
+DEFAULT_CONFIG: Config = {
     "model": {
         "name": "large-v3",
         "device": "cuda",
@@ -14,7 +28,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
-def load_config(config_path: Path | None = None) -> dict[str, Any]:
+def load_config(config_path: Path | None = None) -> Config:
     """Load configuration from TOML file.
 
     Args:
