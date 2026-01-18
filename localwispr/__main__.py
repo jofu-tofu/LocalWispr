@@ -1,8 +1,15 @@
 """Entry point for LocalWispr."""
 
+import argparse
 import platform
+import sys
+from pathlib import Path
+
+import numpy as np
+from scipy.io import wavfile
 
 from localwispr import __version__
+from localwispr.audio import AudioRecorder, AudioRecorderError
 from localwispr.config import load_config
 
 
@@ -63,8 +70,75 @@ def print_gpu_info() -> None:
         print()
 
 
-def main() -> None:
-    """Main entry point for LocalWispr."""
+def record_test(output_file: str | None = None) -> int:
+    """Test audio recording functionality.
+
+    Records audio until the user presses Enter, then displays
+    information about the captured audio.
+
+    Args:
+        output_file: Optional path to save the recorded audio as WAV.
+
+    Returns:
+        Exit code: 0 for success, 1 for error.
+    """
+    print("Audio Recording Test")
+    print("=" * 40)
+
+    try:
+        recorder = AudioRecorder()
+        print(f"Device: {recorder.device_name}")
+        print(f"Sample Rate: {recorder.sample_rate} Hz")
+        print()
+        print("Recording... Press Enter to stop")
+        print()
+
+        # Start recording
+        recorder.start_recording()
+
+        # Wait for Enter key
+        try:
+            input()
+        except EOFError:
+            # Handle non-interactive mode
+            pass
+
+        # Stop recording and get audio data
+        audio_data = recorder.stop_recording()
+
+        # Calculate statistics
+        duration = len(audio_data) / recorder.sample_rate
+        peak_level = float(np.max(np.abs(audio_data))) if len(audio_data) > 0 else 0.0
+
+        # Display results
+        print("Recording Complete")
+        print("-" * 40)
+        print(f"  Duration:    {duration:.2f} seconds")
+        print(f"  Sample Rate: {recorder.sample_rate} Hz")
+        print(f"  Audio Shape: {audio_data.shape}")
+        print(f"  Peak Level:  {peak_level:.4f} ({peak_level * 100:.1f}%)")
+
+        # Save to file if requested
+        if output_file:
+            output_path = Path(output_file)
+            # Convert float32 [-1, 1] to int16 for WAV
+            audio_int16 = (audio_data * 32767).astype(np.int16)
+            wavfile.write(output_path, recorder.sample_rate, audio_int16)
+            print()
+            print(f"Audio saved to: {output_path.absolute()}")
+
+        return 0
+
+    except AudioRecorderError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        return 1
+
+
+def run_default() -> None:
+    """Run the default LocalWispr startup display."""
     print_banner()
 
     # Load and display configuration
@@ -78,6 +152,34 @@ def main() -> None:
     print("=" * 40)
     print("LocalWispr initialized successfully!")
     print("=" * 40)
+
+
+def main() -> None:
+    """Main entry point for LocalWispr."""
+    parser = argparse.ArgumentParser(
+        prog="localwispr",
+        description="LocalWispr - Local speech-to-text with Whisper",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    # record-test subcommand
+    record_test_parser = subparsers.add_parser(
+        "record-test",
+        help="Test audio recording functionality",
+    )
+    record_test_parser.add_argument(
+        "-o", "--output",
+        metavar="FILE",
+        help="Save recorded audio to WAV file",
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "record-test":
+        sys.exit(record_test(args.output))
+    else:
+        # Default behavior: show startup info
+        run_default()
 
 
 if __name__ == "__main__":
