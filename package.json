@@ -1,0 +1,20 @@
+{
+  "name": "localwispr",
+  "version": "0.1.0",
+  "description": "Lightweight local voice-to-text tool with hotkey activation",
+  "main": "src/main.ts",
+  "scripts": {
+    "dev": "bun run src/main.ts",
+    "build": "bun build src/main.ts --outdir dist",
+    "start": "bun run dist/main.js"
+  },
+  "keywords": [
+    "voice-to-text",
+    "speech-recognition",
+    "whisper",
+    "hotkey",
+    "dictation"
+  ],
+  "author": "",
+  "license": "MIT"
+}

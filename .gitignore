@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+build/
+
+# Environment
+.env
+.env.local
+
+# Config (user-specific)
+config.json
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Whisper models (large files)
+models/*.bin
+
+# Electron
+.electron/
