@@ -12,6 +12,7 @@ from localwispr.config import load_config
 
 if TYPE_CHECKING:
     from faster_whisper import WhisperModel
+    from localwispr.audio import AudioRecorder
 
 
 @dataclass
@@ -164,3 +165,31 @@ class WhisperTranscriber:
             inference_time=inference_time,
             audio_duration=audio_duration,
         )
+
+
+def transcribe_recording(
+    recorder: AudioRecorder,
+    transcriber: WhisperTranscriber | None = None,
+    **kwargs,
+) -> TranscriptionResult:
+    """Convenience function to transcribe a recording.
+
+    Stops the recorder, gets Whisper-ready audio, and transcribes it.
+
+    Args:
+        recorder: An AudioRecorder that is currently recording.
+        transcriber: WhisperTranscriber to use. If None, creates a new one.
+        **kwargs: Additional arguments passed to transcribe().
+
+    Returns:
+        TranscriptionResult with transcribed text and timing info.
+    """
+    # Get audio from recorder (stops recording and converts to Whisper format)
+    audio = recorder.get_whisper_audio()
+
+    # Create transcriber if not provided
+    if transcriber is None:
+        transcriber = WhisperTranscriber()
+
+    # Transcribe
+    return transcriber.transcribe(audio, **kwargs)
