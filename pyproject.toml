@@ -1,0 +1,14 @@
+[project]
+name = "localwispr"
+version = "0.1.0"
+description = "Local speech-to-text using Whisper - privacy-first, no cloud APIs"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+localwispr = "localwispr.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

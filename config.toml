@@ -1,0 +1,11 @@
+# LocalWispr Configuration
+
+[model]
+# Whisper model to use: tiny, base, small, medium, large-v2, large-v3
+name = "large-v3"
+
+# Device: cuda (GPU) or cpu
+device = "cuda"
+
+# Compute type: float16 (GPU), int8 (CPU), or float32
+compute_type = "float16"
