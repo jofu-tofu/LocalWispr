@@ -148,5 +148,30 @@ def print_gpu_status() -> None:
     print("=" * 60)
 
 
+def check_gpu() -> dict:
+    """Convenience function for quick GPU status check.
+
+    Returns:
+        Dictionary with cuda_available, gpu_name, vram_gb, error keys.
+    """
+    info = get_gpu_info()
+    result = {
+        "cuda_available": info["cuda_available"],
+        "gpu_name": None,
+        "vram_gb": None,
+        "error": None,
+    }
+
+    if info["cuda_available"] and info["devices"]:
+        device = info["devices"][0]
+        result["gpu_name"] = device["name"]
+        result["vram_gb"] = device["total_memory_gb"]
+
+    if not info["cuda_available"]:
+        result["error"] = "CUDA not available"
+
+    return result
+
+
 if __name__ == "__main__":
     print_gpu_status()
