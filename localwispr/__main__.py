@@ -2,7 +2,9 @@
 
 import argparse
 import platform
+import signal
 import sys
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +13,8 @@ from scipy.io import wavfile
 from localwispr import __version__
 from localwispr.audio import AudioRecorder, AudioRecorderError
 from localwispr.config import load_config
+from localwispr.feedback import play_start_beep, play_stop_beep
+from localwispr.hotkeys import HotkeyListener, HotkeyListenerError, HotkeyMode
 from localwispr.transcribe import WhisperTranscriber
 
 
@@ -234,6 +238,187 @@ def transcribe_test(model_name: str | None = None) -> int:
         return 1
 
 
+def hotkey_test() -> int:
+    """Test hotkey functionality with full recording/transcription pipeline.
+
+    Listens for the configured hotkey chord and performs:
+    - Recording when hotkey is held/toggled
+    - Transcription when released/toggled again
+    - Audio feedback beeps (if enabled)
+
+    Returns:
+        Exit code: 0 for success, 1 for error.
+    """
+    print("Hotkey Test")
+    print("=" * 40)
+
+    # Load configuration
+    config = load_config()
+    hotkey_config = config["hotkeys"]
+
+    # Display current hotkey configuration
+    mode_str = hotkey_config["mode"]
+    modifiers = hotkey_config["modifiers"]
+    audio_feedback = hotkey_config["audio_feedback"]
+
+    # Build chord display string
+    chord = "+".join(mod.capitalize() for mod in modifiers)
+
+    print(f"Mode:           {mode_str}")
+    print(f"Hotkey:         {chord}")
+    print(f"Audio Feedback: {'Enabled' if audio_feedback else 'Disabled'}")
+    print()
+
+    # Privacy notice
+    print("Privacy Notice")
+    print("-" * 40)
+    print("Only modifier keys (Win/Ctrl/Shift) are tracked.")
+    print("No alphanumeric or other keystrokes are logged.")
+    print()
+
+    # Determine hotkey mode
+    if mode_str == "toggle":
+        mode = HotkeyMode.TOGGLE
+        mode_instruction = f"Press {chord} to start recording, press again to stop"
+    else:
+        mode = HotkeyMode.PUSH_TO_TALK
+        mode_instruction = f"Hold {chord} to record, release to transcribe"
+
+    # Initialize components
+    try:
+        recorder = AudioRecorder()
+        print(f"Audio Device: {recorder.device_name}")
+    except AudioRecorderError as e:
+        print(f"Error: Failed to initialize audio recorder: {e}", file=sys.stderr)
+        return 1
+
+    # Lazy-loaded transcriber (created on first use)
+    transcriber: WhisperTranscriber | None = None
+
+    # Event to signal shutdown
+    shutdown_event = threading.Event()
+
+    # Lock for thread-safe access to recorder
+    state_lock = threading.Lock()
+
+    def on_record_start() -> None:
+        """Callback when recording should start."""
+        nonlocal recorder
+
+        try:
+            with state_lock:
+                if recorder.is_recording:
+                    return
+                recorder.start_recording()
+
+            print("Recording...")
+            if audio_feedback:
+                play_start_beep()
+
+        except AudioRecorderError as e:
+            print(f"Error starting recording: {e}", file=sys.stderr)
+            # Reset state on error - need to signal transcription complete
+            listener.on_transcription_complete()
+
+    def on_record_stop() -> None:
+        """Callback when recording should stop and transcription should begin."""
+        nonlocal transcriber, recorder
+
+        print("Transcribing...")
+
+        try:
+            # Get audio from recorder (stops recording)
+            with state_lock:
+                if not recorder.is_recording:
+                    listener.on_transcription_complete()
+                    return
+                audio = recorder.get_whisper_audio()
+
+            # Check if we have audio
+            audio_duration = len(audio) / 16000.0
+            if audio_duration < 0.1:
+                print("No audio captured.")
+                listener.on_transcription_complete()
+                if audio_feedback:
+                    play_stop_beep()
+                return
+
+            # Lazy load transcriber
+            if transcriber is None:
+                print(f"Loading model (first use)...")
+                transcriber = WhisperTranscriber()
+                # Force model load
+                _ = transcriber.model
+                print("Model loaded!")
+
+            # Transcribe
+            result = transcriber.transcribe(audio)
+
+            # Display result
+            print()
+            print(f"Result: {result.text}")
+            print(f"  (Audio: {result.audio_duration:.1f}s, Inference: {result.inference_time:.2f}s)")
+            print()
+
+        except Exception as e:
+            print(f"Error during transcription: {e}", file=sys.stderr)
+
+        finally:
+            # Always signal completion to reset state machine
+            listener.on_transcription_complete()
+            if audio_feedback:
+                play_stop_beep()
+
+    # Create hotkey listener
+    listener = HotkeyListener(
+        on_record_start=on_record_start,
+        on_record_stop=on_record_stop,
+        mode=mode,
+    )
+
+    # Set up clean Ctrl+C handling
+    def signal_handler(signum, frame):
+        """Handle Ctrl+C for clean shutdown."""
+        print("\nShutting down...")
+        shutdown_event.set()
+
+    # Store original handler
+    original_handler = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, signal_handler)
+
+    try:
+        # Start the listener
+        listener.start()
+        print()
+        print(f"Listening for {chord}... Press Ctrl+C to exit")
+        print(f"({mode_instruction})")
+        print()
+
+        # Wait for shutdown signal
+        while not shutdown_event.is_set():
+            shutdown_event.wait(timeout=0.5)
+
+        return 0
+
+    except HotkeyListenerError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        print()
+        print("Troubleshooting:", file=sys.stderr)
+        print("  1. Check if antivirus/security software is blocking keyboard hooks", file=sys.stderr)
+        print("  2. Verify no Group Policy restrictions are in place", file=sys.stderr)
+        print("  3. Try running as administrator", file=sys.stderr)
+        return 1
+
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        return 1
+
+    finally:
+        # Cleanup
+        listener.stop()
+        signal.signal(signal.SIGINT, original_handler)
+
+
 def run_default() -> None:
     """Run the default LocalWispr startup display."""
     print_banner()
@@ -281,12 +466,20 @@ def main() -> None:
         help="Model name to use (overrides config)",
     )
 
+    # hotkey-test subcommand
+    subparsers.add_parser(
+        "hotkey-test",
+        help="Test hotkey-triggered recording and transcription",
+    )
+
     args = parser.parse_args()
 
     if args.command == "record-test":
         sys.exit(record_test(args.output))
     elif args.command == "transcribe-test":
         sys.exit(transcribe_test(args.model))
+    elif args.command == "hotkey-test":
+        sys.exit(hotkey_test())
     else:
         # Default behavior: show startup info
         run_default()
