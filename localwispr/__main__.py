@@ -18,6 +18,7 @@ from localwispr.feedback import play_start_beep, play_stop_beep
 from localwispr.hotkeys import HotkeyListener, HotkeyListenerError, HotkeyMode
 from localwispr.prompts import load_prompt
 from localwispr.transcribe import WhisperTranscriber, transcribe_with_context
+from localwispr.tray import TrayApp, TrayState
 
 
 def print_banner() -> None:
@@ -513,6 +514,33 @@ def run_default() -> None:
     print("=" * 40)
 
 
+def run_tray() -> int:
+    """Run LocalWispr as a system tray application.
+
+    This is the default mode when running `localwispr` without arguments.
+    The application runs in the system tray with hotkey-driven recording.
+
+    Returns:
+        Exit code: 0 for success, 1 for error.
+    """
+    print("Starting LocalWispr in system tray mode...")
+    print("Look for the LocalWispr icon in your system tray.")
+    print()
+
+    try:
+        # Create and run the tray application
+        app = TrayApp()
+
+        # The tray app will handle hotkey integration in Task 3
+        # For now, it just provides the tray icon and menu
+        app.run()
+        return 0
+
+    except Exception as e:
+        print(f"Error starting tray application: {e}", file=sys.stderr)
+        return 1
+
+
 def main() -> None:
     """Main entry point for LocalWispr."""
     parser = argparse.ArgumentParser(
@@ -520,6 +548,18 @@ def main() -> None:
         description="LocalWispr - Local speech-to-text with Whisper",
     )
     subparsers = parser.add_subparsers(dest="command")
+
+    # tray subcommand (also the default when no args)
+    subparsers.add_parser(
+        "tray",
+        help="Run as system tray application (default)",
+    )
+
+    # info subcommand (shows system info)
+    subparsers.add_parser(
+        "info",
+        help="Show system information and configuration",
+    )
 
     # record-test subcommand
     record_test_parser = subparsers.add_parser(
@@ -562,7 +602,12 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.command == "record-test":
+    if args.command == "tray" or args.command is None:
+        # Default behavior: run as system tray application
+        sys.exit(run_tray())
+    elif args.command == "info":
+        run_default()
+    elif args.command == "record-test":
         sys.exit(record_test(args.output))
     elif args.command == "transcribe-test":
         sys.exit(transcribe_test(args.model))
@@ -570,9 +615,6 @@ def main() -> None:
         sys.exit(hotkey_test())
     elif args.command == "context-test":
         sys.exit(context_test(args.text))
-    else:
-        # Default behavior: show startup info
-        run_default()
 
 
 if __name__ == "__main__":

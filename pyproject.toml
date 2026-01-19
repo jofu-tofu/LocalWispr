@@ -7,8 +7,10 @@ requires-python = ">=3.11"
 dependencies = [
     "faster-whisper>=1.2.1",
     "nvidia-cublas-cu12>=12.9.1.4",
+    "pillow>=12.1.0",
     "pygetwindow>=0.0.9",
     "pynput>=1.8.1",
+    "pystray>=0.19.5",
     "scipy>=1.17.0",
     "sounddevice>=0.5.3",
 ]
