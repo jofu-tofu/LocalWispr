@@ -21,11 +21,21 @@ class HotkeyConfig(TypedDict):
     audio_feedback: bool
 
 
+class ContextConfig(TypedDict):
+    """Context detection configuration settings."""
+
+    coding_apps: list[str]
+    planning_apps: list[str]
+    coding_keywords: list[str]
+    planning_keywords: list[str]
+
+
 class Config(TypedDict):
     """Full application configuration."""
 
     model: ModelConfig
     hotkeys: HotkeyConfig
+    context: ContextConfig
 
 
 DEFAULT_CONFIG: Config = {
@@ -38,6 +48,62 @@ DEFAULT_CONFIG: Config = {
         "mode": "push-to-talk",
         "modifiers": ["win", "ctrl", "shift"],
         "audio_feedback": True,
+    },
+    "context": {
+        "coding_apps": [
+            "code",
+            "pycharm",
+            "intellij",
+            "vim",
+            "neovim",
+            "visual studio",
+            "sublime",
+            "atom",
+            "emacs",
+        ],
+        "planning_apps": [
+            "notion",
+            "obsidian",
+            "todoist",
+            "jira",
+            "asana",
+            "trello",
+            "linear",
+        ],
+        "coding_keywords": [
+            "function",
+            "variable",
+            "import",
+            "class",
+            "def",
+            "return",
+            "async",
+            "await",
+            "const",
+            "let",
+            "var",
+            "public",
+            "private",
+            "interface",
+            "type",
+            "null",
+            "undefined",
+        ],
+        "planning_keywords": [
+            "task",
+            "project",
+            "milestone",
+            "deadline",
+            "goal",
+            "plan",
+            "schedule",
+            "priority",
+            "action",
+            "item",
+            "todo",
+            "complete",
+            "review",
+        ],
     },
 }
 

@@ -377,6 +377,7 @@ source = { editable = "." }
 dependencies = [
     { name = "faster-whisper" },
     { name = "nvidia-cublas-cu12" },
+    { name = "pygetwindow" },
     { name = "pynput" },
     { name = "scipy" },
     { name = "sounddevice" },
@@ -386,6 +387,7 @@ dependencies = [
 requires-dist = [
     { name = "faster-whisper", specifier = ">=1.2.1" },
     { name = "nvidia-cublas-cu12", specifier = ">=12.9.1.4" },
+    { name = "pygetwindow", specifier = ">=0.0.9" },
     { name = "pynput", specifier = ">=1.8.1" },
     { name = "scipy", specifier = ">=1.17.0" },
     { name = "sounddevice", specifier = ">=0.5.3" },
@@ -555,6 +557,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pygetwindow"
+version = "0.0.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyrect" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e1/70/c7a4f46dbf06048c6d57d9489b8e0f9c4c3d36b7479f03c5ca97eaa2541d/PyGetWindow-0.0.9.tar.gz", hash = "sha256:17894355e7d2b305cd832d717708384017c1698a90ce24f6f7fbf0242dd0a688", size = 9699, upload-time = "2020-10-04T02:12:50.806Z" }
+
+[[package]]
 name = "pynput"
 version = "1.8.1"
 source = { registry = "https://pypi.org/simple" }
@@ -666,6 +677,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/0f/49/4cea918a08f02817a
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/dc/491b7661614ab97483abf2056be1deee4dc2490ecbf7bff9ab5cdbac86e1/pyreadline3-3.5.4-py3-none-any.whl", hash = "sha256:eaf8e6cc3c49bcccf145fc6067ba8643d1df34d604a1ec0eccbf7a18e6d3fae6", size = 83178, upload-time = "2024-09-19T02:40:08.598Z" },
 ]
+
+[[package]]
+name = "pyrect"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/04/2ba023d5f771b645f7be0c281cdacdcd939fe13d1deb331fc5ed1a6b3a98/PyRect-0.2.0.tar.gz", hash = "sha256:f65155f6df9b929b67caffbd57c0947c5ae5449d3b580d178074bffb47a09b78", size = 17219, upload-time = "2022-03-16T04:45:52.36Z" }
 
 [[package]]
 name = "python-xlib"
