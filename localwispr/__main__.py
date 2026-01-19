@@ -13,9 +13,11 @@ from scipy.io import wavfile
 from localwispr import __version__
 from localwispr.audio import AudioRecorder, AudioRecorderError
 from localwispr.config import load_config
+from localwispr.context import ContextDetector
 from localwispr.feedback import play_start_beep, play_stop_beep
 from localwispr.hotkeys import HotkeyListener, HotkeyListenerError, HotkeyMode
-from localwispr.transcribe import WhisperTranscriber
+from localwispr.prompts import load_prompt
+from localwispr.transcribe import WhisperTranscriber, transcribe_with_context
 
 
 def print_banner() -> None:
@@ -54,11 +56,11 @@ def print_gpu_info() -> None:
         print("-" * 40)
         gpu_info = check_gpu()
         if gpu_info.get("cuda_available"):
-            print(f"  CUDA Available: Yes")
+            print("  CUDA Available: Yes")
             print(f"  GPU Name:       {gpu_info.get('gpu_name', 'Unknown')}")
             print(f"  VRAM:           {gpu_info.get('vram_gb', 'Unknown')} GB")
         else:
-            print(f"  CUDA Available: No")
+            print("  CUDA Available: No")
             if gpu_info.get("error"):
                 print(f"  Note: {gpu_info['error']}")
         print()
@@ -224,7 +226,7 @@ def transcribe_test(model_name: str | None = None) -> int:
 
         # Check latency target
         if result.inference_time < 2.0:
-            print(f"Latency Target:  ✅ PASS (<2s)")
+            print("Latency Target:  ✅ PASS (<2s)")
         else:
             print(f"Latency Target:  ⚠️  {result.inference_time:.2f}s (target: <2s)")
 
@@ -238,12 +240,79 @@ def transcribe_test(model_name: str | None = None) -> int:
         return 1
 
 
+def context_test(text: str | None = None) -> int:
+    """Test context detection functionality.
+
+    Shows current focused window context and optionally tests keyword detection.
+
+    Args:
+        text: Optional text to test keyword detection.
+
+    Returns:
+        Exit code: 0 for success, 1 for error.
+    """
+    print("Context Detection Test")
+    print("=" * 40)
+
+    try:
+        detector = ContextDetector()
+
+        # Test window detection
+        print("Window Detection")
+        print("-" * 40)
+        window_context = detector.detect_from_window()
+        print(f"Detected Context: {window_context.value.upper()}")
+
+        # Get window title for debug (without logging it)
+        try:
+            import pygetwindow as gw
+            active_window = gw.getActiveWindow()
+            if active_window:
+                print("Active Window:    (detected)")  # Don't log title for privacy
+            else:
+                print("Active Window:    (none detected)")
+        except Exception:
+            print("Active Window:    (detection unavailable)")
+
+        print()
+
+        # Test text detection if provided
+        if text:
+            print("Text Detection")
+            print("-" * 40)
+            print(f"Input Text: {text}")
+            text_context = detector.detect_from_text(text)
+            print(f"Detected Context: {text_context.value.upper()}")
+            print()
+
+            # Show what prompt would be loaded
+            print("Prompt Preview")
+            print("-" * 40)
+            prompt = load_prompt(text_context.value)
+            # Show first 100 chars of prompt
+            preview = prompt[:100] + "..." if len(prompt) > 100 else prompt
+            print(f"Prompt ({text_context.value}): {preview}")
+
+        else:
+            print("Text Detection")
+            print("-" * 40)
+            print("Use --text 'your text here' to test keyword detection")
+
+        print()
+        print("Available Contexts: CODING, PLANNING, GENERAL")
+        return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def hotkey_test() -> int:
     """Test hotkey functionality with full recording/transcription pipeline.
 
     Listens for the configured hotkey chord and performs:
     - Recording when hotkey is held/toggled
-    - Transcription when released/toggled again
+    - Context-aware transcription with auto-detection
     - Audio feedback beeps (if enabled)
 
     Returns:
@@ -267,6 +336,7 @@ def hotkey_test() -> int:
     print(f"Mode:           {mode_str}")
     print(f"Hotkey:         {chord}")
     print(f"Audio Feedback: {'Enabled' if audio_feedback else 'Disabled'}")
+    print("Context Aware:  Enabled (auto-detection)")
     print()
 
     # Privacy notice
@@ -274,6 +344,7 @@ def hotkey_test() -> int:
     print("-" * 40)
     print("Only modifier keys (Win/Ctrl/Shift) are tracked.")
     print("No alphanumeric or other keystrokes are logged.")
+    print("Window titles are used for context detection but not logged.")
     print()
 
     # Determine hotkey mode
@@ -291,6 +362,9 @@ def hotkey_test() -> int:
     except AudioRecorderError as e:
         print(f"Error: Failed to initialize audio recorder: {e}", file=sys.stderr)
         return 1
+
+    # Initialize context detector
+    detector = ContextDetector()
 
     # Lazy-loaded transcriber (created on first use)
     transcriber: WhisperTranscriber | None = None
@@ -345,18 +419,21 @@ def hotkey_test() -> int:
 
             # Lazy load transcriber
             if transcriber is None:
-                print(f"Loading model (first use)...")
+                print("Loading model (first use)...")
                 transcriber = WhisperTranscriber()
                 # Force model load
                 _ = transcriber.model
                 print("Model loaded!")
 
-            # Transcribe
-            result = transcriber.transcribe(audio)
+            # Transcribe with context detection
+            result = transcribe_with_context(audio, transcriber, detector)
 
-            # Display result
+            # Display result with context info
             print()
             print(f"Result: {result.text}")
+            context_name = result.detected_context.value.upper() if result.detected_context else "UNKNOWN"
+            retrans_indicator = " (retranscribed)" if result.was_retranscribed else ""
+            print(f"  Context: {context_name}{retrans_indicator}")
             print(f"  (Audio: {result.audio_duration:.1f}s, Inference: {result.inference_time:.2f}s)")
             print()
 
@@ -472,6 +549,17 @@ def main() -> None:
         help="Test hotkey-triggered recording and transcription",
     )
 
+    # context-test subcommand
+    context_test_parser = subparsers.add_parser(
+        "context-test",
+        help="Test context detection functionality",
+    )
+    context_test_parser.add_argument(
+        "-t", "--text",
+        metavar="TEXT",
+        help="Text to test keyword-based context detection",
+    )
+
     args = parser.parse_args()
 
     if args.command == "record-test":
@@ -480,6 +568,8 @@ def main() -> None:
         sys.exit(transcribe_test(args.model))
     elif args.command == "hotkey-test":
         sys.exit(hotkey_test())
+    elif args.command == "context-test":
+        sys.exit(context_test(args.text))
     else:
         # Default behavior: show startup info
         run_default()

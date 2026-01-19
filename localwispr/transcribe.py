@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from localwispr.config import load_config
+from localwispr.context import ContextDetector, ContextType
+from localwispr.prompts import load_prompt
 
 if TYPE_CHECKING:
     from faster_whisper import WhisperModel
@@ -24,12 +26,18 @@ class TranscriptionResult:
         segments: List of segment dictionaries with timing info.
         inference_time: Time taken for inference in seconds.
         audio_duration: Duration of the input audio in seconds.
+        detected_context: The context detected for this transcription.
+        context_detection_time: Time spent on context detection in seconds.
+        was_retranscribed: Whether the audio was retranscribed due to context mismatch.
     """
 
     text: str
     segments: list[dict]
     inference_time: float
     audio_duration: float
+    detected_context: ContextType | None = None
+    context_detection_time: float = 0.0
+    was_retranscribed: bool = False
 
 
 class WhisperTranscriber:
@@ -117,6 +125,7 @@ class WhisperTranscriber:
         *,
         beam_size: int = 5,
         vad_filter: bool = True,
+        initial_prompt: str | None = None,
     ) -> TranscriptionResult:
         """Transcribe audio to text.
 
@@ -125,6 +134,7 @@ class WhisperTranscriber:
                 Should be in range [-1, 1].
             beam_size: Beam size for decoding. Higher is more accurate but slower.
             vad_filter: If True, use voice activity detection to skip silence.
+            initial_prompt: Optional prompt to guide transcription with domain vocabulary.
 
         Returns:
             TranscriptionResult with text and timing information.
@@ -140,6 +150,7 @@ class WhisperTranscriber:
             beam_size=beam_size,
             vad_filter=vad_filter,
             word_timestamps=False,
+            initial_prompt=initial_prompt,
         )
 
         # Collect segments and build full text
@@ -167,9 +178,73 @@ class WhisperTranscriber:
         )
 
 
+def transcribe_with_context(
+    audio: np.ndarray,
+    transcriber: WhisperTranscriber,
+    detector: ContextDetector | None = None,
+    **kwargs,
+) -> TranscriptionResult:
+    """Transcribe audio with intelligent context detection.
+
+    Performs hybrid pre+post context detection:
+    1. Pre-detect context from focused window
+    2. Transcribe with context-appropriate prompt
+    3. Post-detect context from transcribed text
+    4. If contexts differ, retranscribe with post-detected context (max 1 retry)
+
+    Args:
+        audio: Audio data as float32 numpy array, mono, 16kHz.
+        transcriber: WhisperTranscriber to use.
+        detector: ContextDetector to use. If None, creates a new one.
+        **kwargs: Additional arguments passed to transcribe().
+
+    Returns:
+        TranscriptionResult with detected_context populated.
+    """
+    if detector is None:
+        detector = ContextDetector()
+
+    context_start = time.perf_counter()
+
+    # Step 1: Pre-detect context from focused window
+    pre_context = detector.detect_from_window()
+
+    # Step 2: Load prompt for pre-detected context
+    pre_prompt = load_prompt(pre_context.value)
+
+    context_detection_time = time.perf_counter() - context_start
+
+    # Step 3: Transcribe with initial_prompt
+    result = transcriber.transcribe(audio, initial_prompt=pre_prompt, **kwargs)
+
+    # Step 4: Post-detect context from transcribed text
+    post_context = detector.detect_from_text(result.text)
+
+    # Step 5: If contexts differ, retranscribe with post-detected context (MAX 1 RETRY)
+    was_retranscribed = False
+    if pre_context != post_context and post_context != ContextType.GENERAL:
+        # Retranscribe with post-detected context prompt
+        post_prompt = load_prompt(post_context.value)
+        result = transcriber.transcribe(audio, initial_prompt=post_prompt, **kwargs)
+        was_retranscribed = True
+
+    # Step 6: Post-detection context is FINAL
+    final_context = post_context if post_context != ContextType.GENERAL else pre_context
+
+    # Update result with context information
+    result.detected_context = final_context
+    result.context_detection_time = context_detection_time
+    result.was_retranscribed = was_retranscribed
+
+    return result
+
+
 def transcribe_recording(
     recorder: AudioRecorder,
     transcriber: WhisperTranscriber | None = None,
+    *,
+    use_context: bool = True,
+    detector: ContextDetector | None = None,
     **kwargs,
 ) -> TranscriptionResult:
     """Convenience function to transcribe a recording.
@@ -179,6 +254,8 @@ def transcribe_recording(
     Args:
         recorder: An AudioRecorder that is currently recording.
         transcriber: WhisperTranscriber to use. If None, creates a new one.
+        use_context: If True, use context-aware transcription. Defaults to True.
+        detector: ContextDetector to use (only when use_context=True).
         **kwargs: Additional arguments passed to transcribe().
 
     Returns:
@@ -191,5 +268,8 @@ def transcribe_recording(
     if transcriber is None:
         transcriber = WhisperTranscriber()
 
-    # Transcribe
-    return transcriber.transcribe(audio, **kwargs)
+    # Use context-aware transcription or direct transcription
+    if use_context:
+        return transcribe_with_context(audio, transcriber, detector, **kwargs)
+    else:
+        return transcriber.transcribe(audio, **kwargs)

@@ -6,7 +6,6 @@ better recognize domain-specific vocabulary during transcription.
 """
 
 from pathlib import Path
-from typing import Optional
 
 
 # Directory containing prompt files
