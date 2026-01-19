@@ -21,6 +21,12 @@ if sys.platform == "win32":
         pass  # nvidia-cublas-cu12 not installed, will use CPU or fail gracefully
 
 from localwispr.audio import AudioRecorder, AudioRecorderError, prepare_for_whisper
+from localwispr.hotkeys import (
+    HotkeyListener,
+    HotkeyListenerError,
+    HotkeyMode,
+    HotkeyState,
+)
 from localwispr.transcribe import (
     TranscriptionResult,
     WhisperTranscriber,
@@ -31,6 +37,10 @@ __all__ = [
     "AudioRecorder",
     "AudioRecorderError",
     "prepare_for_whisper",
+    "HotkeyListener",
+    "HotkeyListenerError",
+    "HotkeyMode",
+    "HotkeyState",
     "TranscriptionResult",
     "WhisperTranscriber",
     "transcribe_recording",
