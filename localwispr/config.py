@@ -30,12 +30,20 @@ class ContextConfig(TypedDict):
     planning_keywords: list[str]
 
 
+class OutputConfig(TypedDict):
+    """Output configuration settings."""
+
+    auto_paste: bool  # Whether to auto-paste or clipboard-only
+    paste_delay_ms: int  # Delay before paste to ensure focus
+
+
 class Config(TypedDict):
     """Full application configuration."""
 
     model: ModelConfig
     hotkeys: HotkeyConfig
     context: ContextConfig
+    output: OutputConfig
 
 
 DEFAULT_CONFIG: Config = {
@@ -104,6 +112,10 @@ DEFAULT_CONFIG: Config = {
             "complete",
             "review",
         ],
+    },
+    "output": {
+        "auto_paste": True,  # Auto-paste after transcription
+        "paste_delay_ms": 50,  # Small delay before paste
     },
 }
 
