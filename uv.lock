@@ -387,13 +387,13 @@ dependencies = [
     { name = "faster-whisper" },
     { name = "nvidia-cublas-cu12" },
     { name = "pillow" },
-    { name = "plyer" },
     { name = "pygetwindow" },
     { name = "pynput" },
     { name = "pyperclip" },
     { name = "pystray" },
     { name = "scipy" },
     { name = "sounddevice" },
+    { name = "winotify" },
 ]
 
 [package.dev-dependencies]
@@ -407,13 +407,13 @@ requires-dist = [
     { name = "faster-whisper", specifier = ">=1.2.1" },
     { name = "nvidia-cublas-cu12", specifier = ">=12.9.1.4" },
     { name = "pillow", specifier = ">=12.1.0" },
-    { name = "plyer", specifier = ">=2.1.0" },
     { name = "pygetwindow", specifier = ">=0.0.9" },
     { name = "pynput", specifier = ">=1.8.1" },
     { name = "pyperclip", specifier = ">=1.11.0" },
     { name = "pystray", specifier = ">=0.19.5" },
     { name = "scipy", specifier = ">=1.17.0" },
     { name = "sounddevice", specifier = ">=0.5.3" },
+    { name = "winotify", specifier = ">=1.1.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -655,15 +655,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
-]
-
-[[package]]
-name = "plyer"
-version = "2.1.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/20/85/f61425aa9be1f9108eec1c13861c1e11c9a04eb786eb4832a8f7188317df/plyer-2.1.0.tar.gz", hash = "sha256:65b7dfb7e11e07af37a8487eb2aa69524276ef70dad500b07228ce64736baa61", size = 121371, upload-time = "2022-11-12T13:36:48.978Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d3/89/a41c2643fc8eabeb84791acb9d0e4d139b1e4b53473cc4dae947b5fa33ed/plyer-2.1.0-py2.py3-none-any.whl", hash = "sha256:1b1772060df8b3045ed4f08231690ec8f7de30f5a004aa1724665a9074eed113", size = 142266, upload-time = "2022-11-12T13:36:47.181Z" },
 ]
 
 [[package]]
@@ -1142,4 +1133,13 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/94/1a15dd82efb362ac84269196e94cf00f187f7ed21c242792a923cdb1c61f/typing_extensions-4.15.0.tar.gz", hash = "sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466", size = 109391, upload-time = "2025-08-25T13:49:26.313Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/18/67/36e9267722cc04a6b9f15c7f3441c2363321a3ea07da7ae0c0707beb2a9c/typing_extensions-4.15.0-py3-none-any.whl", hash = "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548", size = 44614, upload-time = "2025-08-25T13:49:24.86Z" },
+]
+
+[[package]]
+name = "winotify"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/b0/1b304fdd8fd810f1f8e81a2708f8bf72e0987de1a763f0ee81f6d08bcae7/winotify-1.1.0.tar.gz", hash = "sha256:f8a0d6ff00cb2c1b3dcdfe825431f46f6aa5dc8ce84ffc59e8fda8c7e36687fe", size = 10101, upload-time = "2022-02-07T12:34:46.236Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/85/6cc4c738080d60b62cad59d0f32386b8277d40e2bf8c06fd1e4101a17238/winotify-1.1.0-py3-none-any.whl", hash = "sha256:13aa9b1196b02ab3e699645b4407371ca73348421f8662565100d70c7cf552d9", size = 15034, upload-time = "2022-02-07T12:34:44.341Z" },
 ]

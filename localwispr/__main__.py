@@ -18,7 +18,7 @@ from localwispr.feedback import play_start_beep, play_stop_beep
 from localwispr.hotkeys import HotkeyListener, HotkeyListenerError, HotkeyMode
 from localwispr.prompts import load_prompt
 from localwispr.transcribe import WhisperTranscriber, transcribe_with_context
-from localwispr.tray import TrayApp, TrayState
+from localwispr.tray import TrayApp
 
 
 def print_banner() -> None:

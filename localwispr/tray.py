@@ -231,6 +231,10 @@ class TrayApp:
         # Lock for thread-safe recorder access
         self._recorder_lock = threading.Lock()
 
+        # Model preloading state
+        self._model_preload_complete = threading.Event()
+        self._model_preload_error: Exception | None = None
+
         logger.info("tray_app: initialized")
 
     @property
@@ -505,11 +509,27 @@ class TrayApp:
 
             logger.debug("recording: audio captured, duration_s=%.2f", audio_duration)
 
-            # Initialize transcriber on first use
+            # Wait for model preload if still in progress
+            if not self._model_preload_complete.is_set():
+                logger.info("transcriber: waiting for model preload")
+                # Wait up to 60 seconds for model to load
+                if not self._model_preload_complete.wait(timeout=60.0):
+                    logger.error("transcriber: preload timeout")
+                    show_error("Model load timeout")
+                    return
+
+            # Check if preload failed
+            if self._model_preload_error is not None:
+                logger.error("transcriber: preload had error, retrying sync")
+                # Clear the error and try sync load
+                self._model_preload_error = None
+                self._transcriber = None
+
+            # Initialize transcriber if preload failed or wasn't done
             if self._transcriber is None:
                 from localwispr.transcribe import WhisperTranscriber
 
-                logger.info("transcriber: initializing")
+                logger.info("transcriber: initializing (sync fallback)")
                 self._transcriber = WhisperTranscriber()
                 # Force model load
                 _ = self._transcriber.model
@@ -569,6 +589,26 @@ class TrayApp:
         if self._hotkey_listener is not None:
             self._hotkey_listener.on_transcription_complete()
 
+    def _preload_model_async(self) -> None:
+        """Load Whisper model in background thread.
+
+        This method is run in a daemon thread during startup to preload
+        the ~2GB Whisper model before the user's first transcription request.
+        """
+        try:
+            from localwispr.transcribe import WhisperTranscriber
+
+            logger.info("model_preload: starting")
+            self._transcriber = WhisperTranscriber()
+            # Trigger actual model load by accessing the model property
+            _ = self._transcriber.model
+            logger.info("model_preload: complete")
+        except Exception as e:
+            logger.error("model_preload: failed, error_type=%s", type(e).__name__)
+            self._model_preload_error = e
+        finally:
+            self._model_preload_complete.set()
+
     def _start_hotkey_listener(self) -> None:
         """Start the hotkey listener in a background thread."""
         from localwispr.config import load_config
@@ -615,6 +655,14 @@ class TrayApp:
             """Setup callback - runs after icon is visible."""
             icon.visible = True
 
+            # Start model preloading in background (non-blocking)
+            preload_thread = threading.Thread(
+                target=self._preload_model_async,
+                daemon=True,
+            )
+            preload_thread.start()
+            logger.info("model_preload: thread started")
+
             # Start the hotkey listener
             try:
                 self._start_hotkey_listener()
@@ -622,7 +670,7 @@ class TrayApp:
                 logger.error("hotkey_listener: failed to start, error_type=%s", type(e).__name__)
                 from localwispr.notifications import show_error
 
-                show_error(f"Failed to start hotkey listener")
+                show_error("Failed to start hotkey listener")
 
             # Start queue polling in a background thread
             poll_thread = threading.Thread(

@@ -1,9 +1,9 @@
 """Notification module for LocalWispr.
 
-This module provides toast/system notification support for:
+This module provides toast/system notification support using winotify for:
 - Recording state feedback (Recording..., Transcribing..., Done)
 - Error notifications
-- Graceful fallback when notifications unavailable
+- Fast, native Windows 10+ toast notifications
 
 Privacy Note:
     Notifications NEVER show transcription content. Only generic status
@@ -14,71 +14,39 @@ from __future__ import annotations
 
 import logging
 
+from winotify import Notification, audio
+
 # Configure module logger
 logger = logging.getLogger(__name__)
 
-# Track if we've already warned about notification issues
-_notification_warned = False
-
-
-def _check_notification_support() -> bool:
-    """Check if notification support is available.
-
-    Returns:
-        True if notifications are supported, False otherwise.
-    """
-    global _notification_warned
-
-    try:
-        from plyer import notification
-
-        # Try to access the notification module to verify it's working
-        _ = notification.notify
-        return True
-    except ImportError:
-        if not _notification_warned:
-            logger.warning("notifications: plyer not available")
-            _notification_warned = True
-        return False
-    except Exception as e:
-        if not _notification_warned:
-            logger.warning(
-                "notifications: initialization failed, error_type=%s",
-                type(e).__name__,
-            )
-            _notification_warned = True
-        return False
+# Application identifier for notifications
+APP_ID = "LocalWispr"
 
 
 def show_notification(
     title: str,
     message: str,
     timeout: int = 5,
-    app_name: str = "LocalWispr",
 ) -> bool:
-    """Show a toast notification.
+    """Show a Windows toast notification.
 
     Args:
         title: Notification title.
         message: Notification message body.
-        timeout: Display duration in seconds.
-        app_name: Application name for notification.
+        timeout: Display duration hint (5 or less = "short", more = "long").
 
     Returns:
         True if notification was shown, False otherwise.
     """
-    if not _check_notification_support():
-        return False
-
     try:
-        from plyer import notification
-
-        notification.notify(
+        toast = Notification(
+            app_id=APP_ID,
             title=title,
-            message=message,
-            app_name=app_name,
-            timeout=timeout,
+            msg=message,
+            duration="short" if timeout <= 5 else "long",
         )
+        toast.set_audio(audio.Default, loop=False)
+        toast.show()
         logger.debug("notification: shown, title=%s", title)
         return True
     except Exception as e:
@@ -98,7 +66,7 @@ def show_recording_started() -> bool:
     return show_notification(
         title="LocalWispr",
         message="Recording...",
-        timeout=30,  # Long timeout - will be replaced by next notification
+        timeout=30,  # Long duration - will be replaced by next notification
     )
 
 
@@ -111,7 +79,7 @@ def show_transcribing() -> bool:
     return show_notification(
         title="LocalWispr",
         message="Transcribing...",
-        timeout=30,  # Long timeout - will be replaced by completion
+        timeout=30,  # Long duration - will be replaced by completion
     )
 
 

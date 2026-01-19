@@ -30,3 +30,7 @@ models/*.bin
 
 # Electron
 .electron/
+
+# AIW Installation
+_gsd/
+.claude/
