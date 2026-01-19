@@ -2,6 +2,24 @@
 
 __version__ = "0.1.0"
 
+# Configure CUDA DLL paths for Windows before importing ctranslate2
+import os
+import sys
+
+if sys.platform == "win32":
+    # Find nvidia cublas DLL directory in the virtual environment
+    try:
+        import nvidia.cublas
+        # nvidia.cublas is a namespace package, use __path__ instead of __file__
+        cublas_paths = list(nvidia.cublas.__path__)
+        if cublas_paths:
+            cublas_bin = os.path.join(cublas_paths[0], "bin")
+            if os.path.isdir(cublas_bin):
+                os.add_dll_directory(cublas_bin)
+                os.environ["PATH"] = cublas_bin + os.pathsep + os.environ.get("PATH", "")
+    except ImportError:
+        pass  # nvidia-cublas-cu12 not installed, will use CPU or fail gracefully
+
 from localwispr.audio import AudioRecorder, AudioRecorderError, prepare_for_whisper
 from localwispr.transcribe import (
     TranscriptionResult,
