@@ -9,3 +9,23 @@ device = "cuda"
 
 # Compute type: float16 (GPU), int8 (CPU), or float32
 compute_type = "float16"
+
+[hotkeys]
+# Recording activation mode:
+#   "push-to-talk" - Hold keys to record, release to stop and transcribe
+#   "toggle" - Press once to start recording, press again to stop and transcribe
+mode = "push-to-talk"
+
+# Modifier key combination to activate recording
+# Available modifiers: "win", "ctrl", "shift", "alt"
+# Default: Win+Ctrl+Shift (unlikely to conflict with other applications)
+modifiers = ["win", "ctrl", "shift"]
+
+# Alternative for enterprise/managed environments where Win key may be restricted:
+# modifiers = ["ctrl", "alt", "shift"]
+
+# Play audio feedback sounds when recording starts/stops
+audio_feedback = true
+
+# Privacy note: LocalWispr only monitors modifier key states for hotkey detection.
+# No keystroke logging occurs - regular typing is never captured or recorded.

@@ -13,10 +13,19 @@ class ModelConfig(TypedDict):
     compute_type: str
 
 
+class HotkeyConfig(TypedDict):
+    """Hotkey configuration settings."""
+
+    mode: str  # "push-to-talk" or "toggle"
+    modifiers: list[str]  # ["win", "ctrl", "shift"]
+    audio_feedback: bool
+
+
 class Config(TypedDict):
     """Full application configuration."""
 
     model: ModelConfig
+    hotkeys: HotkeyConfig
 
 
 DEFAULT_CONFIG: Config = {
@@ -24,6 +33,11 @@ DEFAULT_CONFIG: Config = {
         "name": "large-v3",
         "device": "cuda",
         "compute_type": "float16",
+    },
+    "hotkeys": {
+        "mode": "push-to-talk",
+        "modifiers": ["win", "ctrl", "shift"],
+        "audio_feedback": True,
     },
 }
 
