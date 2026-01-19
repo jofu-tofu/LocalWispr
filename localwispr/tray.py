@@ -5,20 +5,67 @@ This module implements the system tray UI using pystray, providing:
 - Tray menu with recording mode, about, and exit options
 - Thread-safe state management for external callers
 - Integration with hotkey listener in background thread
+- Notification popups for recording state feedback
 - Clean shutdown sequence to prevent orphaned threads
+
+Logging Policy:
+    This module uses structured logging with an explicit field whitelist.
+    NEVER logged: transcription content, audio data, exception payloads with user text.
+    Only logged: timestamp, level, event_type, duration_ms, success/fail status.
 """
 
 from __future__ import annotations
 
+import logging
 import queue
 import threading
+import time
 from enum import Enum, auto
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from PIL import Image, ImageDraw
 
 if TYPE_CHECKING:
     import pystray
+
+
+# Configure module logger with rotation
+def _setup_logger() -> logging.Logger:
+    """Set up the LocalWispr logger with rotation.
+
+    Returns:
+        Configured logger instance.
+    """
+    logger = logging.getLogger("localwispr")
+
+    # Only set up handlers if not already configured
+    if not logger.handlers:
+        logger.setLevel(logging.DEBUG)
+
+        # File handler with rotation (10MB max, keep 2 backups)
+        log_file = Path.cwd() / "localwispr.log"
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=10 * 1024 * 1024,  # 10MB
+            backupCount=2,
+            encoding="utf-8",
+        )
+        file_handler.setLevel(logging.DEBUG)
+
+        # Structured format - explicit fields only
+        formatter = logging.Formatter(
+            "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+
+    return logger
+
+
+logger = _setup_logger()
 
 
 class TrayState(Enum):
@@ -123,7 +170,8 @@ class TrayApp:
     """System tray application for LocalWispr.
 
     Manages the system tray icon, menu, and coordinates with the hotkey
-    listener for recording functionality.
+    listener for recording functionality. Integrates notifications and
+    the full transcription pipeline.
 
     Thread Safety:
         State updates from external threads should use update_state() which
@@ -169,10 +217,21 @@ class TrayApp:
         self._stop_event = threading.Event()
 
         # pystray icon reference
-        self._icon: pystray.Icon | None = None
+        self._icon: "pystray.Icon | None" = None
 
         # Background threads to join on shutdown
         self._background_threads: list[threading.Thread] = []
+
+        # Recording pipeline components (lazy loaded)
+        self._recorder = None
+        self._transcriber = None
+        self._detector = None
+        self._hotkey_listener = None
+
+        # Lock for thread-safe recorder access
+        self._recorder_lock = threading.Lock()
+
+        logger.info("tray_app: initialized")
 
     @property
     def state(self) -> TrayState:
@@ -223,7 +282,10 @@ class TrayApp:
         with self._state_lock:
             if self._state == new_state:
                 return
+            old_state = self._state
             self._state = new_state
+
+        logger.debug("tray_state: changed, from=%s, to=%s", old_state.name, new_state.name)
 
         # Update icon image
         if self._icon is not None:
@@ -285,39 +347,39 @@ class TrayApp:
         Returns:
             True if push-to-talk mode.
         """
-        # TODO: Read from config when settings integration is added
-        return True  # Default to PTT for V1
+        from localwispr.config import load_config
+
+        config = load_config()
+        return config["hotkeys"]["mode"] == "push-to-talk"
 
     def _on_mode_ptt(self, icon: "pystray.Icon", item: "pystray.MenuItem") -> None:
         """Handle push-to-talk mode selection."""
+        # Mode change requires restart for V1
         # TODO: Save to config when settings integration is added
         pass
 
     def _on_mode_toggle(self, icon: "pystray.Icon", item: "pystray.MenuItem") -> None:
         """Handle toggle mode selection."""
+        # Mode change requires restart for V1
         # TODO: Save to config when settings integration is added
         pass
 
     def _on_about(self, icon: "pystray.Icon", item: "pystray.MenuItem") -> None:
         """Handle About menu item."""
-        # Show a simple notification for now
-        # TODO: Could open an about dialog in V2
-        if self._icon is not None:
-            try:
-                self._icon.notify(
-                    "LocalWispr v0.1.0\n"
-                    "Local speech-to-text with Whisper\n"
-                    "Privacy-first, no cloud APIs",
-                    "About LocalWispr",
-                )
-            except Exception:
-                pass  # Notifications may not be supported on all platforms
+        from localwispr.notifications import show_notification
+
+        show_notification(
+            title="About LocalWispr",
+            message="LocalWispr v0.1.0\nLocal speech-to-text with Whisper\nPrivacy-first, no cloud APIs",
+            timeout=5,
+        )
 
     def _on_exit(self, icon: "pystray.Icon", item: "pystray.MenuItem") -> None:
         """Handle Exit menu item.
 
         Initiates clean shutdown sequence.
         """
+        logger.info("tray_app: exit requested")
         self._shutdown()
 
     def _shutdown(self) -> None:
@@ -325,29 +387,218 @@ class TrayApp:
 
         Shutdown sequence:
         1. Signal stop to all background threads
-        2. Join threads with timeout
-        3. Stop the tray icon
+        2. Stop hotkey listener
+        3. Join threads with timeout
+        4. Stop the tray icon
         """
+        logger.info("tray_app: shutdown started")
+
         # Signal stop to all threads
         self._stop_event.set()
+
+        # Stop the hotkey listener
+        if self._hotkey_listener is not None:
+            try:
+                self._hotkey_listener.stop()
+            except Exception:
+                pass
 
         # Join background threads with timeout
         for thread in self._background_threads:
             if thread.is_alive():
                 thread.join(timeout=self.THREAD_JOIN_TIMEOUT)
                 if thread.is_alive():
-                    # Thread didn't stop in time - log warning but continue
-                    pass  # Can't log here safely, just continue shutdown
+                    logger.warning("tray_app: thread join timeout")
 
         # Stop the tray icon
         if self._icon is not None:
             self._icon.stop()
 
+        logger.info("tray_app: shutdown complete")
+
+    def _on_record_start(self) -> None:
+        """Callback when recording should start.
+
+        Called by the hotkey listener when the hotkey chord is activated.
+        """
+        from localwispr.config import load_config
+        from localwispr.feedback import play_start_beep
+        from localwispr.notifications import show_recording_started
+
+        logger.info("recording: start")
+        start_time = time.time()
+
+        try:
+            # Initialize recorder on first use
+            if self._recorder is None:
+                from localwispr.audio import AudioRecorder
+
+                self._recorder = AudioRecorder()
+                logger.debug("recording: recorder initialized")
+
+            with self._recorder_lock:
+                if self._recorder.is_recording:
+                    logger.warning("recording: already recording")
+                    return
+                self._recorder.start_recording()
+
+            # Update state and show notification
+            self.update_state(TrayState.RECORDING)
+            show_recording_started()
+
+            # Play audio feedback if enabled
+            config = load_config()
+            if config["hotkeys"]["audio_feedback"]:
+                play_start_beep()
+
+            duration_ms = int((time.time() - start_time) * 1000)
+            logger.info("recording: started, duration_ms=%d", duration_ms)
+
+        except Exception as e:
+            logger.error("recording: start failed, error_type=%s", type(e).__name__)
+            # Reset state on error
+            self.update_state(TrayState.IDLE)
+            if self._hotkey_listener is not None:
+                self._hotkey_listener.on_transcription_complete()
+
+            from localwispr.notifications import show_error
+
+            show_error("Failed to start recording")
+
+    def _on_record_stop(self) -> None:
+        """Callback when recording should stop and transcription should begin.
+
+        Called by the hotkey listener when the hotkey chord is released.
+        """
+        from localwispr.config import load_config
+        from localwispr.notifications import (
+            show_complete,
+            show_clipboard_only,
+            show_error,
+            show_transcribing,
+        )
+        from localwispr.output import output_transcription
+
+        logger.info("recording: stop, starting transcription")
+        start_time = time.time()
+
+        try:
+            # Update state and show notification
+            self.update_state(TrayState.TRANSCRIBING)
+            show_transcribing()
+
+            # Get audio from recorder
+            with self._recorder_lock:
+                if self._recorder is None or not self._recorder.is_recording:
+                    logger.warning("recording: not recording, skipping transcription")
+                    self._finish_transcription()
+                    return
+                audio = self._recorder.get_whisper_audio()
+
+            # Check if we have audio
+            audio_duration = len(audio) / 16000.0
+            if audio_duration < 0.1:
+                logger.warning("recording: no audio captured")
+                show_error("No audio captured")
+                self._finish_transcription()
+                return
+
+            logger.debug("recording: audio captured, duration_s=%.2f", audio_duration)
+
+            # Initialize transcriber on first use
+            if self._transcriber is None:
+                from localwispr.transcribe import WhisperTranscriber
+
+                logger.info("transcriber: initializing")
+                self._transcriber = WhisperTranscriber()
+                # Force model load
+                _ = self._transcriber.model
+                logger.info("transcriber: model loaded")
+
+            # Initialize context detector on first use
+            if self._detector is None:
+                from localwispr.context import ContextDetector
+
+                self._detector = ContextDetector()
+
+            # Transcribe with context detection
+            from localwispr.transcribe import transcribe_with_context
+
+            result = transcribe_with_context(audio, self._transcriber, self._detector)
+
+            inference_time_ms = int(result.inference_time * 1000)
+            logger.info(
+                "transcription: complete, duration_ms=%d, was_retranscribed=%s",
+                inference_time_ms,
+                result.was_retranscribed,
+            )
+
+            # Output transcription
+            config = load_config()
+            auto_paste = config["output"]["auto_paste"]
+            paste_delay_ms = config["output"]["paste_delay_ms"]
+
+            success = output_transcription(
+                text=result.text,
+                auto_paste=auto_paste,
+                paste_delay_ms=paste_delay_ms,
+                play_feedback=config["hotkeys"]["audio_feedback"],
+            )
+
+            if success:
+                if auto_paste:
+                    show_complete()
+                else:
+                    show_clipboard_only()
+            else:
+                show_error("Paste failed - text is in clipboard")
+
+            total_time_ms = int((time.time() - start_time) * 1000)
+            logger.info("pipeline: complete, total_ms=%d", total_time_ms)
+
+        except Exception as e:
+            logger.error("transcription: failed, error_type=%s", type(e).__name__)
+            show_error("Transcription failed")
+
+        finally:
+            self._finish_transcription()
+
+    def _finish_transcription(self) -> None:
+        """Finish transcription and reset state."""
+        self.update_state(TrayState.IDLE)
+        if self._hotkey_listener is not None:
+            self._hotkey_listener.on_transcription_complete()
+
+    def _start_hotkey_listener(self) -> None:
+        """Start the hotkey listener in a background thread."""
+        from localwispr.config import load_config
+        from localwispr.hotkeys import HotkeyListener, HotkeyMode
+
+        config = load_config()
+        hotkey_config = config["hotkeys"]
+
+        # Determine mode
+        if hotkey_config["mode"] == "toggle":
+            mode = HotkeyMode.TOGGLE
+        else:
+            mode = HotkeyMode.PUSH_TO_TALK
+
+        # Create listener
+        self._hotkey_listener = HotkeyListener(
+            on_record_start=self._on_record_start,
+            on_record_stop=self._on_record_stop,
+            mode=mode,
+        )
+
+        # Start listener
+        self._hotkey_listener.start()
+        logger.info("hotkey_listener: started, mode=%s", mode.name)
+
     def run(self) -> None:
         """Run the tray application.
 
         This method blocks until the user exits. The tray icon runs in
-        the main thread, with a periodic callback to process state updates.
+        the main thread, with the hotkey listener in a background thread.
         """
         import pystray
 
@@ -363,12 +614,24 @@ class TrayApp:
         def setup(icon: pystray.Icon) -> None:
             """Setup callback - runs after icon is visible."""
             icon.visible = True
+
+            # Start the hotkey listener
+            try:
+                self._start_hotkey_listener()
+            except Exception as e:
+                logger.error("hotkey_listener: failed to start, error_type=%s", type(e).__name__)
+                from localwispr.notifications import show_error
+
+                show_error(f"Failed to start hotkey listener")
+
             # Start queue polling in a background thread
             poll_thread = threading.Thread(
                 target=self._poll_queue_loop,
                 daemon=True,
             )
             poll_thread.start()
+
+        logger.info("tray_app: starting")
 
         # Run the icon (blocks until stop)
         self._icon.run(setup=setup)
