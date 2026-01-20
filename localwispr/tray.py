@@ -235,6 +235,13 @@ class TrayApp:
         self._model_preload_complete = threading.Event()
         self._model_preload_error: Exception | None = None
 
+        # Floating overlay widget for visual feedback
+        from localwispr.overlay import OverlayWidget
+
+        self._overlay = OverlayWidget(
+            audio_level_callback=self._get_current_audio_level,
+        )
+
         logger.info("tray_app: initialized")
 
     @property
@@ -392,8 +399,9 @@ class TrayApp:
         Shutdown sequence:
         1. Signal stop to all background threads
         2. Stop hotkey listener
-        3. Join threads with timeout
-        4. Stop the tray icon
+        3. Stop the overlay widget
+        4. Join threads with timeout
+        5. Stop the tray icon
         """
         logger.info("tray_app: shutdown started")
 
@@ -406,6 +414,12 @@ class TrayApp:
                 self._hotkey_listener.stop()
             except Exception:
                 pass
+
+        # Stop the overlay widget
+        try:
+            self._overlay.stop()
+        except Exception:
+            pass
 
         # Join background threads with timeout
         for thread in self._background_threads:
@@ -427,7 +441,6 @@ class TrayApp:
         """
         from localwispr.config import load_config
         from localwispr.feedback import play_start_beep
-        from localwispr.notifications import show_recording_started
 
         logger.info("recording: start")
         start_time = time.time()
@@ -446,9 +459,9 @@ class TrayApp:
                     return
                 self._recorder.start_recording()
 
-            # Update state and show notification
+            # Update state and show overlay
             self.update_state(TrayState.RECORDING)
-            show_recording_started()
+            self._overlay.show_recording()
 
             # Play audio feedback if enabled
             config = load_config()
@@ -465,9 +478,7 @@ class TrayApp:
             if self._hotkey_listener is not None:
                 self._hotkey_listener.on_transcription_complete()
 
-            from localwispr.notifications import show_error
-
-            show_error("Failed to start recording")
+            self._overlay.show_error("Failed to start recording")
 
     def _on_record_stop(self) -> None:
         """Callback when recording should stop and transcription should begin.
@@ -475,21 +486,15 @@ class TrayApp:
         Called by the hotkey listener when the hotkey chord is released.
         """
         from localwispr.config import load_config
-        from localwispr.notifications import (
-            show_complete,
-            show_clipboard_only,
-            show_error,
-            show_transcribing,
-        )
         from localwispr.output import output_transcription
 
         logger.info("recording: stop, starting transcription")
         start_time = time.time()
 
         try:
-            # Update state and show notification
+            # Update state and show overlay
             self.update_state(TrayState.TRANSCRIBING)
-            show_transcribing()
+            self._overlay.show_transcribing()
 
             # Get audio from recorder
             with self._recorder_lock:
@@ -503,7 +508,7 @@ class TrayApp:
             audio_duration = len(audio) / 16000.0
             if audio_duration < 0.1:
                 logger.warning("recording: no audio captured")
-                show_error("No audio captured")
+                self._overlay.show_error("No audio captured")
                 self._finish_transcription()
                 return
 
@@ -515,7 +520,7 @@ class TrayApp:
                 # Wait up to 60 seconds for model to load
                 if not self._model_preload_complete.wait(timeout=60.0):
                     logger.error("transcriber: preload timeout")
-                    show_error("Model load timeout")
+                    self._overlay.show_error("Model load timeout")
                     return
 
             # Check if preload failed
@@ -565,20 +570,18 @@ class TrayApp:
                 play_feedback=config["hotkeys"]["audio_feedback"],
             )
 
-            if success:
-                if auto_paste:
-                    show_complete()
-                else:
-                    show_clipboard_only()
-            else:
-                show_error("Paste failed - text is in clipboard")
+            # Hide overlay on completion (success or paste failure)
+            self._overlay.hide()
+
+            if not success:
+                logger.warning("output: paste failed, text is in clipboard")
 
             total_time_ms = int((time.time() - start_time) * 1000)
             logger.info("pipeline: complete, total_ms=%d", total_time_ms)
 
         except Exception as e:
             logger.error("transcription: failed, error_type=%s", type(e).__name__)
-            show_error("Transcription failed")
+            self._overlay.show_error("Transcription failed")
 
         finally:
             self._finish_transcription()
@@ -588,6 +591,17 @@ class TrayApp:
         self.update_state(TrayState.IDLE)
         if self._hotkey_listener is not None:
             self._hotkey_listener.on_transcription_complete()
+
+    def _get_current_audio_level(self) -> float:
+        """Get current audio level from recorder for overlay visualization.
+
+        Returns:
+            Audio RMS level (0.0-1.0), or 0.0 if not recording.
+        """
+        with self._recorder_lock:
+            if self._recorder is not None and self._recorder.is_recording:
+                return self._recorder.get_rms_level()
+        return 0.0
 
     def _preload_model_async(self) -> None:
         """Load Whisper model in background thread.
@@ -655,6 +669,9 @@ class TrayApp:
             """Setup callback - runs after icon is visible."""
             icon.visible = True
 
+            # Start the floating overlay widget
+            self._overlay.start()
+
             # Start model preloading in background (non-blocking)
             preload_thread = threading.Thread(
                 target=self._preload_model_async,
@@ -668,9 +685,7 @@ class TrayApp:
                 self._start_hotkey_listener()
             except Exception as e:
                 logger.error("hotkey_listener: failed to start, error_type=%s", type(e).__name__)
-                from localwispr.notifications import show_error
-
-                show_error("Failed to start hotkey listener")
+                self._overlay.show_error("Failed to start hotkey listener")
 
             # Start queue polling in a background thread
             poll_thread = threading.Thread(

@@ -32,5 +32,4 @@ models/*.bin
 .electron/
 
 # AIW Installation
-_gsd/
 .claude/
