@@ -33,3 +33,15 @@ models/*.bin
 
 # AIW Installation
 .claude/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Claude Code
+_cc-native/
+_output/
+
+# Windows artifacts
+nul
