@@ -32,6 +32,13 @@ from localwispr.transcribe import (
     WhisperTranscriber,
     transcribe_recording,
 )
+from localwispr.volume import (
+    get_mute_state,
+    mute_system,
+    restore_mute_state,
+    system_muted,
+    unmute_system,
+)
 
 __all__ = [
     "AudioRecorder",
@@ -44,4 +51,9 @@ __all__ = [
     "TranscriptionResult",
     "WhisperTranscriber",
     "transcribe_recording",
+    "get_mute_state",
+    "mute_system",
+    "restore_mute_state",
+    "system_muted",
+    "unmute_system",
 ]
