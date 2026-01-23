@@ -5,6 +5,30 @@ __version__ = "0.1.0"
 # Configure CUDA DLL paths for Windows before importing ctranslate2
 import os
 import sys
+from pathlib import Path
+
+
+def _detect_build_variant() -> str:
+    """Detect if running as test or stable build.
+
+    Detection logic:
+    1. If frozen (PyInstaller), check exe path for "Test" in folder or filename
+    2. Otherwise, check BUILD_VARIANT environment variable
+    3. Default to "stable"
+
+    Returns:
+        "test" or "stable"
+    """
+    if getattr(sys, "frozen", False):
+        exe_path = Path(sys.executable)
+        if "Test" in exe_path.parent.name or "Test" in exe_path.stem:
+            return "test"
+    return os.environ.get("BUILD_VARIANT", "stable")
+
+
+BUILD_VARIANT = _detect_build_variant()
+IS_TEST_BUILD = BUILD_VARIANT == "test"
+
 
 if sys.platform == "win32":
     # Find nvidia cublas DLL directory in the virtual environment
@@ -56,4 +80,6 @@ __all__ = [
     "restore_mute_state",
     "system_muted",
     "unmute_system",
+    "BUILD_VARIANT",
+    "IS_TEST_BUILD",
 ]

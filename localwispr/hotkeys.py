@@ -12,13 +12,22 @@ Privacy Note (V1-N03):
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from enum import Enum, auto
 from typing import Callable
 
+logger = logging.getLogger(__name__)
+
 from pynput import keyboard
 from pynput.keyboard import Key
+
+from localwispr.config import get_config
+
+
+# Valid modifier names that can be used in config
+VALID_MODIFIERS = {"win", "ctrl", "shift", "alt"}
 
 
 class HotkeyListenerError(Exception):
@@ -75,11 +84,18 @@ class HotkeyMode(Enum):
 
 
 class HotkeyListener:
-    """Global hotkey listener for Win+Ctrl+Shift chord detection.
+    """Global hotkey listener for configurable chord detection.
 
-    Listens for the Win+Ctrl+Shift key combination to control recording.
-    Supports both push-to-talk (hold to record) and toggle (press to start/stop)
-    modes.
+    Listens for a configurable modifier key combination (from config.toml)
+    to control recording. Supports both push-to-talk (hold to record) and
+    toggle (press to start/stop) modes.
+
+    Default chord: Win+Ctrl+Shift (configurable via hotkeys.modifiers in config)
+    Mode cycle chord: Win+Ctrl+Alt (hardcoded)
+
+    The recording chord is read from config["hotkeys"]["modifiers"], allowing
+    different builds to use different hotkeys (e.g., stable uses Win+Ctrl+Shift,
+    test uses Ctrl+Alt+Shift).
 
     Privacy (V1-N03):
         This listener ONLY tracks modifier key states. All non-modifier keys
@@ -94,20 +110,32 @@ class HotkeyListener:
         >>> listener = HotkeyListener(
         ...     on_record_start=lambda: print("Recording..."),
         ...     on_record_stop=lambda: print("Stopped"),
+        ...     on_mode_cycle=lambda: print("Mode cycled!"),
         ...     mode=HotkeyMode.PUSH_TO_TALK,
         ... )
         >>> listener.start()
-        >>> # Press Win+Ctrl+Shift to record
+        >>> # Press configured chord to record (default: Win+Ctrl+Shift)
+        >>> # Press Win+Ctrl+Alt to cycle modes
         >>> listener.stop()
     """
 
     # Toggle mode debounce time in seconds
     TOGGLE_DEBOUNCE_MS = 100
 
+    # Mode cycle debounce time in milliseconds
+    MODE_CYCLE_DEBOUNCE_MS = 300
+
+    # Startup grace period - ignore events during Windows hook stabilization
+    _STARTUP_GRACE_MS = 150
+
+    # Chord window - all chord keys must be pressed within this window (ms)
+    _CHORD_WINDOW_MS = 500
+
     def __init__(
         self,
         on_record_start: Callable[[], None] | None = None,
         on_record_stop: Callable[[], None] | None = None,
+        on_mode_cycle: Callable[[], None] | None = None,
         mode: HotkeyMode = HotkeyMode.PUSH_TO_TALK,
     ) -> None:
         """Initialize the hotkey listener.
@@ -115,11 +143,41 @@ class HotkeyListener:
         Args:
             on_record_start: Callback invoked when recording should start.
             on_record_stop: Callback invoked when recording should stop.
+            on_mode_cycle: Callback invoked when mode cycle chord is pressed.
             mode: Hotkey activation mode (push-to-talk or toggle).
         """
         self._on_record_start = on_record_start
         self._on_record_stop = on_record_stop
+        self._on_mode_cycle = on_mode_cycle
         self._mode = mode
+
+        # Load recording chord modifiers from config
+        config = get_config()
+        config_modifiers = config["hotkeys"].get("modifiers", ["win", "ctrl", "shift"])
+        self._chord_modifiers: set[str] = set()
+        for mod in config_modifiers:
+            mod_lower = mod.lower()
+            if mod_lower in VALID_MODIFIERS:
+                self._chord_modifiers.add(mod_lower)
+            else:
+                logger.warning("hotkey: ignoring invalid modifier '%s'", mod)
+
+        # Default to Win+Ctrl+Shift if no valid modifiers
+        if len(self._chord_modifiers) < 2:
+            logger.warning("hotkey: insufficient modifiers, using default Win+Ctrl+Shift")
+            self._chord_modifiers = {"win", "ctrl", "shift"}
+
+        # Determine exclusion modifier (the one NOT in the chord that blocks activation)
+        # This prevents accidental triggers when pressing 4 modifiers
+        all_mods = {"win", "ctrl", "shift", "alt"}
+        excluded = all_mods - self._chord_modifiers
+        self._exclusion_modifier: str | None = excluded.pop() if len(excluded) == 1 else None
+
+        logger.info(
+            "hotkey: configured chord=%s, exclusion=%s",
+            "+".join(sorted(self._chord_modifiers)),
+            self._exclusion_modifier,
+        )
 
         # State machine
         self._state = HotkeyState.IDLE
@@ -129,15 +187,25 @@ class HotkeyListener:
         self._win_pressed = False
         self._ctrl_pressed = False
         self._shift_pressed = False
+        self._alt_pressed = False
         self._modifier_lock = threading.Lock()
 
         # Chord state tracking
         self._chord_active = False
+        self._mode_chord_active = False
         self._last_toggle_time: float = 0.0
+        self._last_mode_cycle_time: float = 0.0
+
+        # Timestamp tracking for "clean press" detection
+        self._win_press_time: float = 0.0
+        self._ctrl_press_time: float = 0.0
+        self._shift_press_time: float = 0.0
+        self._alt_press_time: float = 0.0
 
         # Listener
         self._listener: keyboard.Listener | None = None
         self._running = False
+        self._start_time: float | None = None
 
     @property
     def state(self) -> HotkeyState:
@@ -200,11 +268,22 @@ class HotkeyListener:
         """
         return key in (Key.shift, Key.shift_l, Key.shift_r)
 
+    def _is_alt_key(self, key: Key | keyboard.KeyCode) -> bool:
+        """Check if a key is an Alt key.
+
+        Args:
+            key: The key to check.
+
+        Returns:
+            True if the key is Alt (any variant).
+        """
+        return key in (Key.alt, Key.alt_l, Key.alt_r, Key.alt_gr)
+
     def _is_modifier(self, key: Key | keyboard.KeyCode) -> bool:
         """Check if a key is a tracked modifier key.
 
         Privacy (V1-N03):
-            This method returns True ONLY for Win, Ctrl, and Shift keys.
+            This method returns True ONLY for Win, Ctrl, Shift, and Alt keys.
             All other keys (alphanumeric, punctuation, function keys, etc.)
             return False and are ignored by the listener.
 
@@ -212,18 +291,107 @@ class HotkeyListener:
             key: The key to check.
 
         Returns:
-            True only if the key is Win, Ctrl, or Shift.
+            True only if the key is Win, Ctrl, Shift, or Alt.
         """
-        return self._is_win_key(key) or self._is_ctrl_key(key) or self._is_shift_key(key)
+        return (
+            self._is_win_key(key)
+            or self._is_ctrl_key(key)
+            or self._is_shift_key(key)
+            or self._is_alt_key(key)
+        )
 
-    def _is_chord_pressed(self) -> bool:
-        """Check if the full Win+Ctrl+Shift chord is pressed.
+    def _is_modifier_pressed(self, modifier: str) -> bool:
+        """Check if a specific modifier is pressed.
+
+        Args:
+            modifier: One of "win", "ctrl", "shift", "alt".
 
         Returns:
-            True if all three modifier types are currently pressed.
+            True if the modifier is currently pressed.
+        """
+        if modifier == "win":
+            return self._win_pressed
+        elif modifier == "ctrl":
+            return self._ctrl_pressed
+        elif modifier == "shift":
+            return self._shift_pressed
+        elif modifier == "alt":
+            return self._alt_pressed
+        return False
+
+    def _is_chord_pressed(self) -> bool:
+        """Check if the configured recording chord is pressed.
+
+        The chord modifiers are read from config (e.g., ["win", "ctrl", "shift"]
+        or ["ctrl", "alt", "shift"]). An exclusion modifier blocks activation
+        to prevent accidental triggers when all 4 modifiers are pressed.
+
+        Returns:
+            True if all configured modifiers are pressed AND exclusion is NOT.
         """
         with self._modifier_lock:
-            return self._win_pressed and self._ctrl_pressed and self._shift_pressed
+            # Check all required modifiers are pressed
+            for mod in self._chord_modifiers:
+                if not self._is_modifier_pressed(mod):
+                    return False
+
+            # Check exclusion modifier is NOT pressed (mutual exclusion)
+            if self._exclusion_modifier and self._is_modifier_pressed(self._exclusion_modifier):
+                return False
+
+            return True
+
+    def _get_modifier_press_time(self, modifier: str) -> float:
+        """Get the press timestamp for a specific modifier.
+
+        Args:
+            modifier: One of "win", "ctrl", "shift", "alt".
+
+        Returns:
+            Timestamp when the modifier was last pressed.
+        """
+        if modifier == "win":
+            return self._win_press_time
+        elif modifier == "ctrl":
+            return self._ctrl_press_time
+        elif modifier == "shift":
+            return self._shift_press_time
+        elif modifier == "alt":
+            return self._alt_press_time
+        return 0.0
+
+    def _is_chord_fresh(self) -> bool:
+        """Check if all chord keys were pressed recently (within 500ms window).
+
+        This prevents "stale" modifier state from triggering the chord.
+        All configured chord keys must have been pressed within _CHORD_WINDOW_MS
+        of each other and within _CHORD_WINDOW_MS of the current time.
+
+        Returns:
+            True if all chord keys were pressed within the time window.
+        """
+        with self._modifier_lock:
+            now = time.time()
+            window_sec = self._CHORD_WINDOW_MS / 1000.0
+            times = [self._get_modifier_press_time(mod) for mod in self._chord_modifiers]
+            oldest = min(times)
+            newest = max(times)
+            # All presses must be within window of each other AND recent
+            return (now - oldest) < window_sec and (newest - oldest) < window_sec
+
+    def _is_mode_chord_pressed(self) -> bool:
+        """Check if the mode cycle chord (Win+Ctrl+Alt) is pressed.
+
+        Returns:
+            True if Win+Ctrl+Alt are pressed (but NOT Shift).
+        """
+        with self._modifier_lock:
+            return (
+                self._win_pressed
+                and self._ctrl_pressed
+                and self._alt_pressed
+                and not self._shift_pressed
+            )
 
     def _on_key_press(self, key: Key | keyboard.KeyCode | None) -> None:
         """Handle key press events.
@@ -242,19 +410,36 @@ class HotkeyListener:
         if not self._is_modifier(key):
             return
 
-        # Update modifier state
+        # Update modifier state and record press timestamps
+        now = time.time()
         with self._modifier_lock:
             if self._is_win_key(key):
                 self._win_pressed = True
+                self._win_press_time = now
             elif self._is_ctrl_key(key):
                 self._ctrl_pressed = True
+                self._ctrl_press_time = now
             elif self._is_shift_key(key):
                 self._shift_pressed = True
+                self._shift_press_time = now
+            elif self._is_alt_key(key):
+                self._alt_pressed = True
+                self._alt_press_time = now
 
-        # Check for chord activation
-        if self._is_chord_pressed() and not self._chord_active:
+        # Check for recording chord activation (Win+Ctrl+Shift)
+        # Must pass all checks: chord pressed, keys are fresh, not already active
+        if self._is_chord_pressed() and self._is_chord_fresh() and not self._chord_active:
+            # Ignore during startup grace period (Windows hook stabilization)
+            if self._start_time and (time.time() - self._start_time) < (self._STARTUP_GRACE_MS / 1000):
+                logger.debug("hotkey: ignoring chord during startup grace period")
+                return
             self._chord_active = True
             self._on_chord_down()
+
+        # Check for mode cycle chord activation (Win+Ctrl+Alt, not Shift)
+        if self._is_mode_chord_pressed() and not self._mode_chord_active:
+            self._mode_chord_active = True
+            self._on_mode_chord_down()
 
     def _on_key_release(self, key: Key | keyboard.KeyCode | None) -> None:
         """Handle key release events.
@@ -275,7 +460,9 @@ class HotkeyListener:
 
         # Check for chord deactivation before updating state
         was_chord_active = self._chord_active
+        was_mode_chord_active = self._mode_chord_active
         chord_pressed_before = self._is_chord_pressed()
+        mode_chord_pressed_before = self._is_mode_chord_pressed()
 
         # Update modifier state
         with self._modifier_lock:
@@ -285,14 +472,21 @@ class HotkeyListener:
                 self._ctrl_pressed = False
             elif self._is_shift_key(key):
                 self._shift_pressed = False
+            elif self._is_alt_key(key):
+                self._alt_pressed = False
 
-        # Check if chord was just released
+        # Check if recording chord was just released
         if was_chord_active and chord_pressed_before and not self._is_chord_pressed():
             self._chord_active = False
             self._on_chord_up()
 
+        # Check if mode chord was just released
+        if was_mode_chord_active and mode_chord_pressed_before and not self._is_mode_chord_pressed():
+            self._mode_chord_active = False
+            # Mode cycle is triggered on press, not release, so nothing to do here
+
     def _on_chord_down(self) -> None:
-        """Handle chord press event.
+        """Handle recording chord press event (Win+Ctrl+Shift).
 
         In push-to-talk mode: Start recording.
         In toggle mode: Toggle recording state (with debounce).
@@ -305,6 +499,17 @@ class HotkeyListener:
             if current_time - self._last_toggle_time >= self.TOGGLE_DEBOUNCE_MS:
                 self._last_toggle_time = current_time
                 self._toggle_recording()
+
+    def _on_mode_chord_down(self) -> None:
+        """Handle mode cycle chord press event (Win+Ctrl+Alt).
+
+        Cycles through transcription modes with debounce.
+        """
+        current_time = time.time() * 1000  # Convert to milliseconds
+        if current_time - self._last_mode_cycle_time >= self.MODE_CYCLE_DEBOUNCE_MS:
+            self._last_mode_cycle_time = current_time
+            if self._on_mode_cycle is not None:
+                self._on_mode_cycle()
 
     def _on_chord_up(self) -> None:
         """Handle chord release event.
@@ -391,6 +596,7 @@ class HotkeyListener:
                 on_release=self._on_key_release,
             )
             self._listener.start()
+            self._start_time = time.time()
             self._running = True
         except OSError as e:
             raise HotkeyListenerError(
@@ -428,7 +634,9 @@ class HotkeyListener:
             self._win_pressed = False
             self._ctrl_pressed = False
             self._shift_pressed = False
+            self._alt_pressed = False
             self._chord_active = False
+            self._mode_chord_active = False
 
     def __enter__(self) -> HotkeyListener:
         """Context manager entry."""

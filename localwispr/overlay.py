@@ -1,8 +1,9 @@
 """Floating overlay widget for LocalWispr.
 
 Provides visual feedback via a floating overlay instead of toast notifications:
-- Recording state with audio level visualization (waveform bars)
-- Transcribing state with loading animation (pulsing dots)
+- Recording state with model name and audio level visualization (waveform bars)
+- Transcribing state with model name and rotating spinner animation
+- Consistent teal color scheme across all states
 - Error feedback with brief flash
 
 Thread Safety:
@@ -26,6 +27,12 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     pass
 
+# Import build variant detection
+from localwispr import IS_TEST_BUILD
+
+# App display name varies by build variant
+APP_DISPLAY_NAME = "LocalWispr [TEST]" if IS_TEST_BUILD else "LocalWispr"
+
 logger = logging.getLogger("localwispr")
 
 
@@ -37,25 +44,33 @@ class OverlayState(Enum):
     TRANSCRIBING = auto()
 
 
-# Colors for each state
-STATE_COLORS = {
-    OverlayState.RECORDING: "#DC3545",      # Red
-    OverlayState.TRANSCRIBING: "#FFC107",   # Amber
-}
+# Single overlay color (teal)
+OVERLAY_COLOR = "#17A2B8"
 
-# Overlay dimensions
-PILL_WIDTH = 180
-PILL_HEIGHT = 50
-PILL_RADIUS = 25
+# Overlay dimensions (reduced ~50%)
+PILL_WIDTH = 130
+PILL_HEIGHT = 38
+PILL_RADIUS = 19
 PADDING_BOTTOM = 40
 
-# Waveform bar settings
+# Waveform bar settings (scaled down)
 NUM_BARS = 5
-BAR_WIDTH = 8
-BAR_GAP = 6
-BAR_MIN_HEIGHT = 8
-BAR_MAX_HEIGHT = 36
+BAR_WIDTH = 6
+BAR_GAP = 4
+BAR_MIN_HEIGHT = 6
+BAR_MAX_HEIGHT = 28
 BAR_COLOR = "#FFFFFF"
+
+# Spinner settings
+SPINNER_RADIUS = 10
+SPINNER_WIDTH = 3
+SPINNER_ARC_EXTENT = 270
+SPINNER_SPEED = 360  # Degrees per second
+
+# Model name display
+MODEL_FONT = ("Segoe UI", 9)
+MODEL_COLOR = "#FFFFFF"
+MODEL_LEFT_MARGIN = 12
 
 # Animation settings
 POLL_INTERVAL_MS = 50
@@ -82,14 +97,18 @@ class OverlayWidget:
     def __init__(
         self,
         audio_level_callback: Callable[[], float] | None = None,
+        model_name_callback: Callable[[], str] | None = None,
     ) -> None:
         """Initialize the overlay widget.
 
         Args:
             audio_level_callback: Function that returns current audio level (0.0-1.0).
                 Called during recording to animate waveform bars.
+            model_name_callback: Function that returns current model name (e.g., "large-v3").
+                Called when drawing to display model name on overlay.
         """
         self._audio_level_callback = audio_level_callback
+        self._model_name_callback = model_name_callback
         self._command_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._root: tk.Tk | None = None
@@ -98,7 +117,7 @@ class OverlayWidget:
         self._state = OverlayState.HIDDEN
         self._smoothed_level = 0.0
         self._bar_heights: list[float] = [BAR_MIN_HEIGHT] * NUM_BARS
-        self._dot_phase = 0.0
+        self._spinner_angle = 0.0
         self._restart_count = 0
         self._max_restarts = 3
 
@@ -172,7 +191,7 @@ class OverlayWidget:
         if self._root is None:
             return
 
-        self._root.title("LocalWispr Overlay")
+        self._root.title(f"{APP_DISPLAY_NAME} Overlay")
         self._root.overrideredirect(True)  # No window decorations
         self._root.attributes("-topmost", True)  # Always on top
         self._root.attributes("-alpha", 0.9)  # 90% opacity
@@ -261,7 +280,7 @@ class OverlayWidget:
             return
 
         self._state = OverlayState.TRANSCRIBING
-        self._dot_phase = 0.0
+        self._spinner_angle = 0.0
         self._draw_transcribing()
         self._root.deiconify()
         logger.debug("overlay: showing transcribing state")
@@ -324,17 +343,65 @@ class OverlayWidget:
             fill=color, outline=color,
         )
 
+    def _get_model_name(self) -> str:
+        """Get the current model name from callback.
+
+        Returns:
+            Model name string, or empty string if unavailable.
+        """
+        if self._model_name_callback is not None:
+            try:
+                return self._model_name_callback()
+            except Exception:
+                pass
+        return ""
+
+    def _draw_model_name(self) -> float:
+        """Draw the model name on the left side of the pill.
+
+        Returns:
+            The x position after the model name (for positioning other elements).
+        """
+        if self._canvas is None:
+            return MODEL_LEFT_MARGIN
+
+        model_name = self._get_model_name()
+        if not model_name:
+            return MODEL_LEFT_MARGIN
+
+        center_y = PILL_HEIGHT // 2
+
+        # Draw model name text
+        text_id = self._canvas.create_text(
+            MODEL_LEFT_MARGIN,
+            center_y,
+            text=model_name,
+            font=MODEL_FONT,
+            fill=MODEL_COLOR,
+            anchor="w",
+        )
+
+        # Get text bounding box to calculate width
+        bbox = self._canvas.bbox(text_id)
+        if bbox:
+            return bbox[2] + 8  # Right edge of text + margin
+        return MODEL_LEFT_MARGIN + 50  # Fallback
+
     def _draw_recording(self) -> None:
-        """Draw the recording state with waveform bars."""
+        """Draw the recording state with model name and waveform bars."""
         if self._canvas is None:
             return
 
         self._canvas.delete("all")
-        self._draw_pill(STATE_COLORS[OverlayState.RECORDING])
+        self._draw_pill(OVERLAY_COLOR)
 
-        # Draw waveform bars centered in pill
+        # Draw model name on left
+        content_start_x = self._draw_model_name()
+
+        # Calculate waveform area (right of model name, centered in remaining space)
         total_bar_width = NUM_BARS * BAR_WIDTH + (NUM_BARS - 1) * BAR_GAP
-        start_x = (PILL_WIDTH - total_bar_width) // 2
+        available_width = PILL_WIDTH - content_start_x - PILL_RADIUS
+        start_x = content_start_x + (available_width - total_bar_width) // 2
         center_y = PILL_HEIGHT // 2
 
         for i, height in enumerate(self._bar_heights):
@@ -342,42 +409,44 @@ class OverlayWidget:
             y1 = center_y - height / 2
             y2 = center_y + height / 2
 
-            # Draw rounded bar
+            # Draw bar
             self._canvas.create_rectangle(
                 x, y1, x + BAR_WIDTH, y2,
                 fill=BAR_COLOR, outline=BAR_COLOR,
             )
 
     def _draw_transcribing(self) -> None:
-        """Draw the transcribing state with pulsing dots."""
+        """Draw the transcribing state with model name and rotating spinner."""
         if self._canvas is None:
             return
 
         self._canvas.delete("all")
-        self._draw_pill(STATE_COLORS[OverlayState.TRANSCRIBING])
+        self._draw_pill(OVERLAY_COLOR)
 
-        # Draw three pulsing dots
-        num_dots = 3
-        dot_base_radius = 6
-        dot_gap = 20
-        total_width = num_dots * dot_base_radius * 2 + (num_dots - 1) * dot_gap
-        start_x = (PILL_WIDTH - total_width) // 2 + dot_base_radius
-        center_y = PILL_HEIGHT // 2
+        # Draw model name on left
+        content_start_x = self._draw_model_name()
 
-        for i in range(num_dots):
-            # Calculate pulse phase for this dot (staggered)
-            dot_phase = (self._dot_phase - i * 0.3) % 1.0
-            # Sine wave for smooth pulsing
-            scale = 1.0 + 0.3 * math.sin(dot_phase * 2 * math.pi)
-            radius = dot_base_radius * scale
+        # Calculate spinner position (centered in remaining space)
+        available_width = PILL_WIDTH - content_start_x - PILL_RADIUS
+        spinner_center_x = content_start_x + available_width // 2
+        spinner_center_y = PILL_HEIGHT // 2
 
-            x = start_x + i * (dot_base_radius * 2 + dot_gap)
+        # Draw rotating arc spinner
+        # Calculate arc start angle (rotates over time)
+        start_angle = self._spinner_angle
 
-            self._canvas.create_oval(
-                x - radius, center_y - radius,
-                x + radius, center_y + radius,
-                fill="#FFFFFF", outline="#FFFFFF",
-            )
+        # Draw the arc (270-degree arc that rotates)
+        self._canvas.create_arc(
+            spinner_center_x - SPINNER_RADIUS,
+            spinner_center_y - SPINNER_RADIUS,
+            spinner_center_x + SPINNER_RADIUS,
+            spinner_center_y + SPINNER_RADIUS,
+            start=start_angle,
+            extent=SPINNER_ARC_EXTENT,
+            style="arc",
+            outline=MODEL_COLOR,
+            width=SPINNER_WIDTH,
+        )
 
     def _update_recording_animation(self) -> None:
         """Update waveform bars based on audio level."""
@@ -417,10 +486,12 @@ class OverlayWidget:
         self._draw_recording()
 
     def _update_transcribing_animation(self) -> None:
-        """Update pulsing dots animation."""
+        """Update spinning arc animation."""
         if self._canvas is None:
             return
 
-        # Advance phase (complete cycle in ~1 second)
-        self._dot_phase = (self._dot_phase + POLL_INTERVAL_MS / 1000.0) % 1.0
+        # Advance spinner angle (SPINNER_SPEED degrees per second)
+        self._spinner_angle = (
+            self._spinner_angle + SPINNER_SPEED * POLL_INTERVAL_MS / 1000.0
+        ) % 360.0
         self._draw_transcribing()

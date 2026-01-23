@@ -1,41 +1,49 @@
 # LocalWispr
 
-A lightweight local voice-to-text tool for Windows. Press a keybind to capture speech and insert text into any focused application.
+Local voice-to-text for Windows. Press a hotkey to capture speech and insert text into any focused application.
 
 ## Features
 
-- **Hotkey Activation**: Press a configurable keybind to start/stop voice capture
-- **Universal Input**: Text is typed into whatever window is currently focused
-- **Local Processing**: Privacy-focused with local speech recognition
-- **Customization UI**: Configure hotkeys, language, and behavior
+- **Hotkey Activation**: Configurable keybind starts/stops voice capture
+- **Universal Input**: Text types into the currently focused window
+- **Local Processing**: Privacy-focused speech recognition via faster-whisper
+- **Visual Feedback**: Floating overlay indicates recording status
+- **Mode Support**: Multiple transcription modes (dictation, chat, email)
 
 ## Tech Stack
 
-- **Runtime**: Bun
-- **UI Framework**: Electron (lightweight)
-- **Speech Recognition**: Whisper.cpp (local) or Web Speech API
-- **Hotkey System**: Native Windows API bindings
+- **Runtime**: Python 3.11+ with uv package manager
+- **Speech Recognition**: faster-whisper (local Whisper implementation)
+- **Hotkey System**: pynput for global keyboard hooks
+- **UI**: PySide6 for system tray and settings window
+- **Build**: PyInstaller for standalone EXE
 
-## Getting Started
+## Quick Start
 
 ```bash
 # Install dependencies
-bun install
+uv sync
 
-# Run in development
-bun run dev
+# Run from source
+uv run python -m localwispr
 
-# Build for production
-bun run build
+# Build standalone EXE
+build.bat
 ```
 
 ## Configuration
 
-Settings are stored in `config.json`:
+Settings stored in `config.toml`:
 
-- `hotkey`: The keybind to activate recording (default: `Ctrl+Shift+Space`)
-- `language`: Speech recognition language (default: `en-US`)
-- `model`: Whisper model size (default: `base`)
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `hotkey` | Recording activation keybind | `win+ctrl+shift` |
+| `language` | Speech recognition language | `en` |
+| `model_size` | Whisper model (tiny, base, small, medium, large) | `base` |
+
+## Development
+
+See `CLAUDE.md` for build instructions and testing guidelines.
 
 ## License
 

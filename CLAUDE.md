@@ -1,47 +1,88 @@
 # Claude Code Instructions for LocalWispr
 
+## Context
+
+LocalWispr is a voice-to-text Windows application. Users run the **built EXE**, not Python scripts directly. This means code changes are invisible until rebuilt.
+
 ## Building the EXE
 
-**IMPORTANT**: When testing ANY code changes, you MUST rebuild the EXE before asking the user to test.
+**CRITICAL: Always rebuild BEFORE asking the user to test.** Code changes have no effect until the EXE is rebuilt. After making changes:
 
-### Build Command
+1. Run `build.bat test` (or the manual build commands below)
+2. Wait for build to complete successfully
+3. THEN ask the user to test
+
+If build fails with "Access is denied", the user needs to close the running EXE first.
+
+### Dual-Version Build System
+
+LocalWispr supports two build variants that can run simultaneously:
+
+| Version | Folder | Hotkey | Console | Icon |
+|---------|--------|--------|---------|------|
+| **Stable** | `dist/LocalWispr/` | Win+Ctrl+Shift | Hidden | Blue wave |
+| **Test** | `dist/LocalWispr-Test/` | Ctrl+Alt+Shift | Visible | Orange wave |
+
+### Build Commands
+
 ```bash
-cd /c/Users/fujos/LocalWispr && .venv/Scripts/python.exe -m PyInstaller --noconfirm localwispr.spec && cp config.toml dist/LocalWispr/
+# Build stable version (default)
+build.bat
+build.bat stable
+
+# Build test version (for iterating on changes)
+build.bat test
+
+# Build both versions
+build.bat both
 ```
 
-### What This Does
-1. Runs PyInstaller to create `dist/LocalWispr/LocalWispr.exe`
-2. Copies `config.toml` to `dist/LocalWispr/` (next to EXE)
+### Typical Workflow
 
-### Why This Matters
-- The user runs the **built EXE**, not the Python script
-- Code changes don't take effect until rebuilt
-- The EXE reads `config.toml` from its own directory (`dist/LocalWispr/`)
-
-### Testing Workflow
 1. Make code changes
-2. **Rebuild the EXE** (command above)
-3. Ask user to run `dist\LocalWispr\LocalWispr.exe`
-4. Check logs/diagnostics
+2. Run `build.bat test` to build test version
+3. User runs `dist\LocalWispr-Test\LocalWispr-Test.exe` alongside stable
+4. Iterate until working
+5. Run `build.bat stable` when ready to release
+
+### What Each Build Does
+
+1. Runs all tests (fails build if tests fail)
+2. Runs PyInstaller to create EXE
+3. Copies appropriate config file:
+   - Stable: `config.toml` → `dist/LocalWispr/config.toml`
+   - Test: `config-test.toml` → `dist/LocalWispr-Test/config.toml`
+
+### Build Behavior
+
+- User runs the built EXE, so changes require rebuild to take effect
+- Test version shows visible console for debugging
+- Both versions run simultaneously with different hotkeys
+- Separate log files: `localwispr.log` (stable) vs `localwispr-test.log` (test)
 
 ### Key Files
+
 | File | Purpose |
 |------|---------|
 | `localwispr/*.py` | Source code |
-| `localwispr.spec` | PyInstaller build config |
-| `config.toml` | Source config (copied to dist on build) |
-| `dist/LocalWispr/` | Built application folder |
-| `dist/LocalWispr/config.toml` | Config the EXE actually reads |
+| `localwispr.spec` | PyInstaller build config (parameterized) |
+| `config.toml` | Stable version config (Win+Ctrl+Shift) |
+| `config-test.toml` | Test version config (Ctrl+Alt+Shift) |
+| `build.bat` | Build script with stable/test/both options |
+| `dist/LocalWispr/` | Stable build output |
+| `dist/LocalWispr-Test/` | Test build output |
 
 ### Diagnostic Locations
+
 - `Desktop/localwispr_diagnostic.txt` - Settings window diagnostic
-- `localwispr.log` - Runtime logs (in CWD or next to EXE)
+- `localwispr.log` - Stable version runtime logs
+- `localwispr-test.log` - Test version runtime logs
 
 ---
 
 ## Testing
 
-Tests run against source code directly and do NOT require an EXE rebuild.
+Tests validate source code directly without requiring an EXE rebuild.
 
 ### Commands
 
@@ -62,14 +103,11 @@ Tests run against source code directly and do NOT require an EXE rebuild.
 
 ### Mocking
 
-**Patch at usage location, not source.** Patching at source doesn't affect already-imported references.
+Patch at usage location (where the import is consumed) rather than the source module. This ensures patches affect already-imported references.
 
 ```python
-# Correct
+# Patch where WhisperModel is used
 mocker.patch("localwispr.transcribe.WhisperModel")
-
-# Wrong
-mocker.patch("faster_whisper.WhisperModel")
 ```
 
 **External dependencies to mock:**

@@ -14,6 +14,7 @@ Privacy Note:
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,9 @@ CLIPBOARD_RETRY_DELAY_MS = 100
 
 # Paste simulation configuration
 DEFAULT_PASTE_DELAY_MS = 50
+
+# Lock for serializing paste operations to prevent concurrent pynput Controller calls
+_paste_lock = threading.Lock()
 
 
 class OutputError(Exception):
@@ -81,30 +85,50 @@ def paste_to_active_window(delay_ms: int = DEFAULT_PASTE_DELAY_MS) -> bool:
     Uses pynput to simulate the keyboard shortcut. A small delay is added
     before the paste to ensure the active window is ready to receive input.
 
+    Thread Safety:
+        Uses a module-level lock to serialize paste operations, preventing
+        concurrent pynput Controller calls which can cause conflicts.
+
     Args:
         delay_ms: Delay in milliseconds before paste (default: 50ms).
 
     Returns:
         True if paste simulation succeeded, False otherwise.
     """
-    try:
-        # Small delay to ensure window focus is stable
-        if delay_ms > 0:
-            time.sleep(delay_ms / 1000.0)
+    with _paste_lock:
+        try:
+            # Small delay to ensure window focus is stable
+            if delay_ms > 0:
+                time.sleep(delay_ms / 1000.0)
 
-        # Simulate Ctrl+V
-        keyboard = Controller()
-        keyboard.press(Key.ctrl)
-        keyboard.press("v")
-        keyboard.release("v")
-        keyboard.release(Key.ctrl)
+            keyboard = Controller()
 
-        logger.debug("paste_simulation: success")
-        return True
+            # Clear any stuck modifier keys before pasting
+            # This prevents conflicts with hotkey chord keys (Win+Ctrl+Shift)
+            for key in (Key.ctrl, Key.ctrl_l, Key.ctrl_r,
+                        Key.shift, Key.shift_l, Key.shift_r,
+                        Key.alt, Key.alt_l, Key.alt_r,
+                        Key.cmd, Key.cmd_l, Key.cmd_r):
+                try:
+                    keyboard.release(key)
+                except Exception:
+                    pass  # Key may not be pressed, ignore
 
-    except Exception as e:
-        logger.error("paste_simulation: failed, error_type=%s", type(e).__name__)
-        return False
+            # Small delay for keyboard state to settle
+            time.sleep(0.01)  # 10ms
+
+            # Simulate Ctrl+V on a clean keyboard state
+            keyboard.press(Key.ctrl)
+            keyboard.press("v")
+            keyboard.release("v")
+            keyboard.release(Key.ctrl)
+
+            logger.debug("paste_simulation: success")
+            return True
+
+        except Exception as e:
+            logger.error("paste_simulation: failed, error_type=%s", type(e).__name__)
+            return False
 
 
 def output_transcription(

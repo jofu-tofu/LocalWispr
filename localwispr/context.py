@@ -3,68 +3,11 @@
 Detects the current context (CODING, PLANNING, GENERAL) based on:
 - Active window title (pre-detection)
 - Transcribed text keywords (post-detection)
+
+Keyword and app lists are loaded from config.py (single source of truth).
 """
 
 from enum import Enum
-
-# Default keyword patterns for context detection
-CODING_KEYWORDS: list[str] = [
-    "function",
-    "variable",
-    "import",
-    "class",
-    "def",
-    "return",
-    "async",
-    "await",
-    "const",
-    "let",
-    "var",
-    "public",
-    "private",
-    "interface",
-    "type",
-    "null",
-    "undefined",
-]
-
-PLANNING_KEYWORDS: list[str] = [
-    "task",
-    "project",
-    "milestone",
-    "deadline",
-    "goal",
-    "plan",
-    "schedule",
-    "priority",
-    "action",
-    "item",
-    "todo",
-    "complete",
-    "review",
-]
-
-CODING_APPS: list[str] = [
-    "code",
-    "pycharm",
-    "intellij",
-    "vim",
-    "neovim",
-    "visual studio",
-    "sublime",
-    "atom",
-    "emacs",
-]
-
-PLANNING_APPS: list[str] = [
-    "notion",
-    "obsidian",
-    "todoist",
-    "jira",
-    "asana",
-    "trello",
-    "linear",
-]
 
 
 class ContextType(Enum):
@@ -87,16 +30,24 @@ class ContextDetector:
     ) -> None:
         """Initialize the context detector.
 
+        If lists are not provided, loads from config (single source of truth).
+
         Args:
             coding_apps: List of app name patterns for coding context.
             planning_apps: List of app name patterns for planning context.
             coding_keywords: List of keywords indicating coding context.
             planning_keywords: List of keywords indicating planning context.
         """
-        self.coding_apps = coding_apps if coding_apps is not None else CODING_APPS
-        self.planning_apps = planning_apps if planning_apps is not None else PLANNING_APPS
-        self.coding_keywords = coding_keywords if coding_keywords is not None else CODING_KEYWORDS
-        self.planning_keywords = planning_keywords if planning_keywords is not None else PLANNING_KEYWORDS
+        # Load from config if any argument is None
+        if any(arg is None for arg in [coding_apps, planning_apps, coding_keywords, planning_keywords]):
+            from localwispr.config import get_config
+            config = get_config()
+            ctx = config["context"]
+
+        self.coding_apps = coding_apps if coding_apps is not None else ctx["coding_apps"]
+        self.planning_apps = planning_apps if planning_apps is not None else ctx["planning_apps"]
+        self.coding_keywords = coding_keywords if coding_keywords is not None else ctx["coding_keywords"]
+        self.planning_keywords = planning_keywords if planning_keywords is not None else ctx["planning_keywords"]
 
     def detect_from_window(self) -> ContextType:
         """Detect context from the currently focused window title.

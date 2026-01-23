@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from localwispr.config import load_config
+from localwispr.config import get_config
 from localwispr.context import ContextDetector, ContextType
 from localwispr.prompts import load_prompt
 
@@ -64,12 +64,20 @@ class WhisperTranscriber:
                 If None, uses config setting.
         """
         # Load config for defaults
-        config = load_config()
+        config = get_config()
         model_config = config["model"]
 
         self._model_name = model_name or model_config["name"]
         self._device = device or model_config["device"]
         self._compute_type = compute_type or model_config["compute_type"]
+
+        # Language setting (auto = None for faster-whisper)
+        lang = model_config.get("language", "auto")
+        self._language = None if lang == "auto" else lang
+
+        # Vocabulary/hotwords for better recognition
+        vocab_config = config.get("vocabulary", {})
+        self._hotwords = vocab_config.get("words", [])
 
         # Lazy-loaded model
         self._model: WhisperModel | None = None
@@ -115,6 +123,16 @@ class WhisperTranscriber:
         return self._compute_type
 
     @property
+    def language(self) -> str | None:
+        """Get the language setting (None = auto-detect)."""
+        return self._language
+
+    @property
+    def hotwords(self) -> list[str]:
+        """Get the vocabulary/hotwords list."""
+        return self._hotwords
+
+    @property
     def is_loaded(self) -> bool:
         """Check if the model is loaded."""
         return self._model is not None
@@ -145,13 +163,23 @@ class WhisperTranscriber:
         # Run inference with timing
         start_time = time.perf_counter()
 
-        segments_iter, info = self.model.transcribe(
-            audio,
-            beam_size=beam_size,
-            vad_filter=vad_filter,
-            word_timestamps=False,
-            initial_prompt=initial_prompt,
-        )
+        # Build transcribe kwargs
+        transcribe_kwargs = {
+            "beam_size": beam_size,
+            "vad_filter": vad_filter,
+            "word_timestamps": False,
+            "initial_prompt": initial_prompt,
+        }
+
+        # Add language if specified (None = auto-detect)
+        if self._language is not None:
+            transcribe_kwargs["language"] = self._language
+
+        # Add hotwords if configured (for better recognition of custom vocabulary)
+        if self._hotwords:
+            transcribe_kwargs["hotwords"] = " ".join(self._hotwords)
+
+        segments_iter, info = self.model.transcribe(audio, **transcribe_kwargs)
 
         # Collect segments and build full text
         segments = []
