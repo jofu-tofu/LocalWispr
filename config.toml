@@ -39,3 +39,31 @@ auto_paste = true
 
 # Delay before paste to ensure focus (milliseconds)
 paste_delay_ms = 50
+
+[streaming]
+# Enable streaming transcription for faster processing of long recordings
+# When enabled, audio is transcribed in segments during recording
+enabled = false
+
+# Minimum silence duration (ms) before triggering segment transcription
+# Higher = more accurate (fewer segments, more context per transcription)
+min_silence_ms = 800
+
+# Maximum segment duration (seconds) before forced transcription
+max_segment_duration = 20.0
+
+# Minimum segment duration (seconds) - avoid tiny fragments
+min_segment_duration = 2.0
+
+# Audio overlap between segments (ms) for better context
+overlap_ms = 100
+
+# Context detection settings for streaming mode
+# Check context every N segments (detects if coding/planning/general)
+context_check_interval = 3
+
+# Lock context after N segments (stops re-checking)
+context_lock_threshold = 4
+
+# Or lock context after N words, whichever comes first
+context_word_threshold = 50

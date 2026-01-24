@@ -3,18 +3,27 @@
 from __future__ import annotations
 
 import threading
-from typing import Any
+from math import gcd
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
+
+if TYPE_CHECKING:
+    pass  # Future type imports
 import sounddevice as sd
-from scipy import signal
+from scipy.signal import resample_poly
 
 # Whisper model requirements
 WHISPER_SAMPLE_RATE: int = 16000
 WHISPER_DTYPE = np.float32
 
 
-def prepare_for_whisper(audio: np.ndarray, source_rate: int) -> np.ndarray:
+def prepare_for_whisper(
+    audio: np.ndarray,
+    source_rate: int,
+    normalize: bool = True,
+    reference_max: float | None = None,
+) -> np.ndarray:
     """Convert audio to Whisper-compatible format.
 
     Converts audio to 16kHz mono float32 normalized to [-1, 1] range,
@@ -23,9 +32,13 @@ def prepare_for_whisper(audio: np.ndarray, source_rate: int) -> np.ndarray:
     Args:
         audio: Input audio as NumPy array. Can be mono (1D) or stereo (2D).
         source_rate: Sample rate of the input audio in Hz.
+        normalize: Whether to normalize audio to [-1, 1] range. Default True.
+        reference_max: If provided, normalize relative to this value instead
+            of the audio's own max. Used for consistent normalization across
+            multiple chunks in streaming mode.
 
     Returns:
-        Audio array as float32, mono, resampled to 16kHz, normalized to [-1, 1].
+        Audio array as float32, mono, resampled to 16kHz, optionally normalized.
     """
     if audio.size == 0:
         return np.array([], dtype=WHISPER_DTYPE)
@@ -43,17 +56,25 @@ def prepare_for_whisper(audio: np.ndarray, source_rate: int) -> np.ndarray:
     # Ensure 1D array
     audio = audio.flatten()
 
-    # Resample to 16kHz if needed
+    # Resample to 16kHz if needed using polyphase filtering
+    # Polyphase is better for speech than FFT-based resampling
     if source_rate != WHISPER_SAMPLE_RATE:
-        # Calculate number of samples in output
-        num_samples = int(len(audio) * WHISPER_SAMPLE_RATE / source_rate)
-        audio = signal.resample(audio, num_samples)
+        g = gcd(WHISPER_SAMPLE_RATE, source_rate)
+        up = WHISPER_SAMPLE_RATE // g
+        down = source_rate // g
+        audio = resample_poly(audio, up, down)
         audio = audio.astype(WHISPER_DTYPE)
 
     # Normalize to [-1, 1] range
-    max_val = np.max(np.abs(audio))
-    if max_val > 0:
-        audio = audio / max_val
+    if normalize:
+        if reference_max is not None and reference_max > 0:
+            # Use provided reference for consistent normalization
+            audio = audio / reference_max
+        else:
+            # Use audio's own max
+            max_val = np.max(np.abs(audio))
+            if max_val > 0:
+                audio = audio / max_val
 
     # Ensure output is float32
     return audio.astype(WHISPER_DTYPE)
@@ -70,16 +91,28 @@ class AudioRecorder:
 
     Captures audio from the system's default input device using sounddevice.
     Audio is stored as chunks and returned as a NumPy array when recording stops.
+
+    Supports an optional on_chunk callback for streaming transcription,
+    allowing real-time processing of audio during recording.
     """
 
-    def __init__(self, device: int | str | None = None) -> None:
+    def __init__(
+        self,
+        device: int | str | None = None,
+        on_chunk: "Callable[[np.ndarray], None] | None" = None,
+    ) -> None:
         """Initialize the audio recorder.
 
         Args:
             device: Audio input device. None uses the system default.
                 Can be device index (int) or device name substring (str).
+            on_chunk: Optional callback invoked for each audio chunk during
+                recording. Used for streaming transcription. The callback
+                receives the raw audio chunk (numpy array) at the device's
+                native sample rate.
         """
         self._device = device
+        self._on_chunk = on_chunk
         self._stream: sd.InputStream | None = None
         self._chunks: list[np.ndarray] = []
         self._recording = False
@@ -132,15 +165,25 @@ class AudioRecorder:
             # Log status flags (overflow/underflow warnings)
             pass  # Could add logging here if needed
 
+        # Make a copy for storage and potential callback
+        chunk_copy = indata.copy()
+
         with self._lock:
             if self._recording:
                 # Store a copy of the audio data
-                self._chunks.append(indata.copy())
+                self._chunks.append(chunk_copy)
 
                 # Update audio levels
-                audio_data = indata.flatten()
+                audio_data = chunk_copy.flatten()
                 self._peak_level = float(np.max(np.abs(audio_data)))
                 self._rms_level = float(np.sqrt(np.mean(audio_data**2)))
+
+        # Notify streaming callback outside the lock to avoid blocking
+        if self._on_chunk is not None and self._recording:
+            try:
+                self._on_chunk(chunk_copy)
+            except Exception:
+                pass  # Don't let callback errors disrupt recording
 
     def start_recording(self) -> None:
         """Begin capturing audio from the microphone.

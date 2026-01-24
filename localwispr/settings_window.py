@@ -1,7 +1,7 @@
 """Settings window for LocalWispr.
 
-This module provides a graphical settings interface using Tkinter,
-allowing users to configure LocalWispr without editing config.toml directly.
+This module provides a Tkinter implementation of the SettingsViewProtocol.
+It's a temporary GUI that will be replaced when migrating to a new framework.
 
 Tabs:
     - General: Recording mode, hotkeys, audio feedback, output settings
@@ -15,10 +15,10 @@ import logging
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
-    from localwispr.config import Config
+    from localwispr.settings_model import SettingsSnapshot, ValidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +45,8 @@ LANGUAGES = [
 ]
 
 
-class SettingsWindow:
-    """Settings window for LocalWispr configuration.
+class TkinterSettingsView:
+    """Tkinter implementation of SettingsViewProtocol.
 
     Provides a tabbed interface for configuring:
     - Recording mode and hotkeys
@@ -55,218 +55,206 @@ class SettingsWindow:
     - Whisper model settings
     - Custom vocabulary
 
-    Auto-saves on every change with 500ms debounce.
-
-    Example:
-        >>> window = SettingsWindow()
-        >>> window.show()
+    Explicit Save button approach - no auto-save.
     """
 
     # Window dimensions
     WINDOW_WIDTH = 450
-    WINDOW_HEIGHT = 500
+    WINDOW_HEIGHT = 580
 
-    # Debounce delay for auto-save (milliseconds)
-    SAVE_DEBOUNCE_MS = 500
+    # Base window title
+    WINDOW_TITLE = "LocalWispr Settings"
 
-    def __init__(
-        self,
-        on_settings_changed: Callable[[], None] | None = None,
-    ) -> None:
-        """Initialize the settings window.
-
-        Args:
-            on_settings_changed: Optional callback invoked after settings are saved.
-                                 Used to notify the app to apply changes (e.g., restart hotkey listener).
-        """
+    def __init__(self) -> None:
+        """Initialize the settings view."""
         self._window: tk.Toplevel | None = None
         self._root: tk.Tk | None = None
 
-        # Callback for settings changes
-        self._on_settings_changed = on_settings_changed
-
-        # Config reference (loaded when window opens)
-        self._config: Config | None = None
+        # Callbacks (set by controller)
+        self.on_save_requested: Callable[[], None] | None = None
+        self.on_cancel_requested: Callable[[], None] | None = None
+        self.on_setting_changed: Callable[[str, Any], None] | None = None
 
         # Tkinter variables for bindings
         self._vars: dict[str, tk.Variable] = {}
 
-        # Debounced auto-save state
-        self._save_timer: threading.Timer | None = None
-        self._save_lock = threading.Lock()
+        # Dirty state
+        self._is_dirty = False
+
+        # Save button reference for enabling/disabling
+        self._save_button: ttk.Button | None = None
+
+        # Vocabulary listbox reference
+        self._vocab_listbox: tk.Listbox | None = None
+        self._vocab_entry: ttk.Entry | None = None
+
+    def populate(self, settings: "SettingsSnapshot") -> None:
+        """Populate the view with settings values.
+
+        Args:
+            settings: Settings snapshot to display.
+        """
+        # Always store settings for reference (needed by collect())
+        self._settings = settings
+
+        if self._root is None:
+            return  # UI not ready, will be populated in _create_and_run_window
+
+        # Populate variables (traces are set up after this)
+        self._vars["mode"].set(settings.hotkey_mode)
+        self._vars["audio_feedback"].set(settings.audio_feedback)
+        self._vars["mute_system"].set(settings.mute_system)
+        self._vars["auto_paste"].set(settings.auto_paste)
+        self._vars["paste_delay_ms"].set(settings.paste_delay_ms)
+        self._vars["model_name"].set(settings.model_name)
+        self._vars["device"].set(settings.model_device)
+        self._vars["compute_type"].set(settings.model_compute_type)
+        self._vars["language"].set(settings.model_language)
+        self._vars["streaming_enabled"].set(settings.streaming_enabled)
+
+        # Populate vocabulary list
+        if self._vocab_listbox is not None:
+            self._vocab_listbox.delete(0, tk.END)
+            for word in settings.vocabulary_words:
+                self._vocab_listbox.insert(tk.END, word)
+
+        # Update hotkey display
+        hotkey_str = " + ".join(mod.capitalize() for mod in settings.hotkey_modifiers)
+        if hasattr(self, "_hotkey_label"):
+            self._hotkey_label.config(text=f"Current: {hotkey_str}")
+
+        logger.debug("settings_view: populated with %s settings", len(self._vars))
+
+    def collect(self) -> "SettingsSnapshot":
+        """Collect current UI state into a settings snapshot.
+
+        Returns:
+            SettingsSnapshot reflecting current UI values.
+        """
+        from localwispr.settings_model import SettingsSnapshot
+
+        # Get vocabulary words from listbox
+        vocab_words: tuple[str, ...] = ()
+        if self._vocab_listbox is not None:
+            vocab_words = tuple(self._vocab_listbox.get(0, tk.END))
+
+        return SettingsSnapshot(
+            # Model
+            model_name=self._vars["model_name"].get(),
+            model_device=self._vars["device"].get(),
+            model_compute_type=self._vars["compute_type"].get(),
+            model_language=self._vars["language"].get(),
+            # Hotkeys (modifiers from original, mode from UI)
+            hotkey_mode=self._vars["mode"].get(),
+            hotkey_modifiers=self._settings.hotkey_modifiers,  # Keep existing
+            audio_feedback=self._vars["audio_feedback"].get(),
+            mute_system=self._vars["mute_system"].get(),
+            # Output
+            auto_paste=self._vars["auto_paste"].get(),
+            paste_delay_ms=self._vars["paste_delay_ms"].get(),
+            # Vocabulary
+            vocabulary_words=vocab_words,
+            # Streaming
+            streaming_enabled=self._vars["streaming_enabled"].get(),
+            streaming_min_silence_ms=self._settings.streaming_min_silence_ms,
+            streaming_max_segment_duration=self._settings.streaming_max_segment_duration,
+            streaming_min_segment_duration=self._settings.streaming_min_segment_duration,
+            streaming_overlap_ms=self._settings.streaming_overlap_ms,
+        )
+
+    def set_dirty(self, is_dirty: bool) -> None:
+        """Update the dirty state indicator.
+
+        Args:
+            is_dirty: True if there are unsaved changes.
+        """
+        self._is_dirty = is_dirty
+
+        # Update window title
+        if self._window is not None:
+            title = self.WINDOW_TITLE
+            if is_dirty:
+                title = f"* {title}"
+            self._window.title(title)
+
+        # Update Save button state
+        if self._save_button is not None:
+            if is_dirty:
+                self._save_button.config(state=tk.NORMAL)
+            else:
+                self._save_button.config(state=tk.DISABLED)
+
+    def show_validation_errors(self, result: "ValidationResult") -> None:
+        """Display validation errors to the user.
+
+        Args:
+            result: Validation result with errors dict.
+        """
+        # Build error message
+        lines = ["Cannot save settings due to the following errors:\n"]
+        for field, error in result.errors.items():
+            # Clean up field name for display
+            display_field = field.replace("_", " ").title()
+            lines.append(f"- {display_field}: {error}")
+
+        message = "\n".join(lines)
+
+        # Show error dialog
+        if self._root is not None:
+            try:
+                messagebox.showerror("Validation Error", message)
+            except tk.TclError:
+                pass
+
+    def confirm_discard_changes(self) -> bool:
+        """Ask user to confirm discarding unsaved changes.
+
+        Returns:
+            True if user confirms discard, False to cancel close.
+        """
+        if self._root is None:
+            return True
+
+        try:
+            return messagebox.askyesno(
+                "Unsaved Changes",
+                "You have unsaved changes.\n\nDiscard changes and close?",
+                icon=messagebox.WARNING,
+            )
+        except tk.TclError:
+            return True
+
+    def close(self) -> None:
+        """Close the settings window."""
+        if self._window is not None:
+            self._window.destroy()
+        if self._root is not None:
+            self._root.quit()
+            self._root.destroy()
+        self._window = None
+        self._root = None
+        logger.debug("settings_view: closed")
 
     def show(self) -> None:
         """Show the settings window.
 
-        Creates and displays the settings window. If already open,
-        brings the existing window to focus.
+        Creates the window if needed and starts the event loop.
         """
         # Run in a separate thread to avoid blocking
-        thread = threading.Thread(target=self._create_window, daemon=True)
+        thread = threading.Thread(target=self._create_and_run_window, daemon=True)
         thread.start()
 
-    def _schedule_save(self, *args) -> None:
-        """Schedule a debounced save (500ms after last change).
-
-        Called by tkinter variable trace callbacks. Multiple rapid changes
-        will only trigger one save after the debounce period.
-        """
-        with self._save_lock:
-            if self._save_timer is not None:
-                self._save_timer.cancel()
-            self._save_timer = threading.Timer(
-                self.SAVE_DEBOUNCE_MS / 1000.0,
-                self._do_save,
-            )
-            self._save_timer.start()
-
-    def _do_save(self) -> None:
-        """Actually perform the save (called by debounce timer)."""
-        from localwispr.config import reload_config, save_config
-
-        # Build updated config from current UI state
-        try:
-            updated_config: Config = {
-                "model": {
-                    "name": self._vars["model_name"].get(),
-                    "device": self._vars["device"].get(),
-                    "compute_type": self._vars["compute_type"].get(),
-                    "language": self._vars["language"].get(),
-                },
-                "hotkeys": {
-                    "mode": self._vars["mode"].get(),
-                    "modifiers": self._config["hotkeys"]["modifiers"],  # Keep existing
-                    "audio_feedback": self._vars["audio_feedback"].get(),
-                    "mute_system": self._vars["mute_system"].get(),
-                },
-                "context": self._config.get("context", {}),  # Keep existing
-                "output": {
-                    "auto_paste": self._vars["auto_paste"].get(),
-                    "paste_delay_ms": self._vars["paste_delay_ms"].get(),
-                },
-                "vocabulary": {
-                    "words": list(self._vocab_listbox.get(0, tk.END)),
-                },
-            }
-
-            logger.debug("settings_window: auto-saving config=%s", updated_config)
-
-            # Save to file
-            save_config(updated_config)
-            # Refresh the cached config so other modules see the new values
-            reload_config()
-            logger.info("settings_window: config auto-saved successfully")
-
-            # Notify caller that settings changed
-            if self._on_settings_changed is not None:
-                try:
-                    logger.debug("settings_window: invoking on_settings_changed callback")
-                    self._on_settings_changed()
-                except Exception as e:
-                    logger.error("settings_window: on_settings_changed callback failed: %s", e)
-
-        except Exception as e:
-            logger.error("settings_window: auto-save failed, error=%s", e)
-
-    def _setup_auto_save_traces(self) -> None:
-        """Set up trace callbacks on all tkinter variables for auto-save."""
-        # Variables to watch for changes
-        var_names = [
-            "mode",
-            "audio_feedback",
-            "mute_system",
-            "auto_paste",
-            "paste_delay_ms",
-            "model_name",
-            "device",
-            "compute_type",
-            "language",
-        ]
-
-        for var_name in var_names:
-            if var_name in self._vars:
-                self._vars[var_name].trace_add("write", self._schedule_save)
-
-        logger.debug("settings_window: auto-save traces set up for %d variables", len(var_names))
-
-    def _create_window(self) -> None:
+    def _create_and_run_window(self) -> None:
         """Create and run the settings window."""
-        import os
-        import sys
-        from pathlib import Path
-        from localwispr.config import load_config, _get_config_path
-
-        # Comprehensive diagnostic - write to Desktop for guaranteed visibility
-        diagnostic = []
-        diagnostic.append("=== LocalWispr Settings Diagnostic ===")
-        diagnostic.append(f"sys.frozen: {getattr(sys, 'frozen', False)}")
-        diagnostic.append(f"sys.executable: {sys.executable}")
-        diagnostic.append(f"os.getcwd(): {os.getcwd()}")
-
-        config_path = _get_config_path()
-        diagnostic.append(f"config_path: {config_path}")
-        diagnostic.append(f"config_path.exists(): {config_path.exists()}")
-        diagnostic.append(f"config_path.resolve(): {config_path.resolve()}")
-
-        if config_path.exists():
-            raw_content = config_path.read_text()
-            diagnostic.append(f"\n=== Raw config.toml content ===\n{raw_content}")
-            diagnostic.append(f"\n=== Key value checks ===")
-            diagnostic.append(f"'toggle' in content: {'toggle' in raw_content}")
-            diagnostic.append(f"'push-to-talk' in content: {'push-to-talk' in raw_content}")
-            diagnostic.append(f"'audio_feedback = false' in content: {'audio_feedback = false' in raw_content.lower()}")
-            diagnostic.append(f"'audio_feedback = true' in content: {'audio_feedback = true' in raw_content.lower()}")
-        else:
-            diagnostic.append("\n!!! CONFIG FILE DOES NOT EXIST !!!")
-            parent = config_path.parent
-            if parent.exists():
-                diagnostic.append(f"Files in {parent}:")
-                for f in parent.iterdir():
-                    diagnostic.append(f"  - {f.name}")
-
-        # Write to Desktop (guaranteed findable)
-        desktop_file = Path.home() / "Desktop" / "localwispr_diagnostic.txt"
-        try:
-            desktop_file.write_text("\n".join(diagnostic))
-        except Exception as e:
-            diagnostic.append(f"Failed to write to desktop: {e}")
-
-        # Load current config fresh from disk
-        self._config = load_config()
-
-        # Write loaded config to debug file
-        try:
-            with open(desktop_file, "a") as f:
-                f.write(f"\n=== Loaded Config ===\n")
-                f.write(f"hotkeys: {self._config.get('hotkeys')}\n")
-                f.write(f"output: {self._config.get('output')}\n")
-                f.write(f"audio_feedback type: {type(self._config['hotkeys']['audio_feedback'])}\n")
-                f.write(f"audio_feedback value: {self._config['hotkeys']['audio_feedback']}\n")
-                f.write(f"auto_paste type: {type(self._config['output']['auto_paste'])}\n")
-                f.write(f"auto_paste value: {self._config['output']['auto_paste']}\n")
-        except Exception:
-            pass
-
-        logger.debug("settings_window: loaded config hotkeys=%s", self._config.get("hotkeys"))
-        logger.debug("settings_window: loaded config output=%s", self._config.get("output"))
-        logger.debug("settings_window: loaded config model=%s", self._config.get("model"))
-
         # Create root window
         self._root = tk.Tk()
         self._root.withdraw()  # Hide root
 
         # Create toplevel window
         self._window = tk.Toplevel(self._root)
-        self._window.title("LocalWispr Settings")
+        self._window.title(self.WINDOW_TITLE)
         self._window.geometry(f"{self.WINDOW_WIDTH}x{self.WINDOW_HEIGHT}")
         self._window.resizable(False, False)
-
-        # Set window icon (optional, may fail on some systems)
-        try:
-            # Use a simple approach - no icon
-            pass
-        except Exception:
-            pass
 
         # Center window on screen
         self._window.update_idletasks()
@@ -285,29 +273,170 @@ class SettingsWindow:
         notebook = ttk.Notebook(main_frame)
         notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
+        # Initialize variables before creating tabs
+        self._init_variables()
+
         # Create tabs
         self._create_general_tab(notebook)
         self._create_model_tab(notebook)
         self._create_vocabulary_tab(notebook)
 
-        # Set up auto-save trace callbacks on all variables
-        self._setup_auto_save_traces()
+        # Set up change traces on all variables
+        self._setup_change_traces()
 
-        # Create button frame with Close button only (auto-save handles persistence)
+        # Create button frame with Save and Cancel buttons
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X)
 
+        # Cancel button (left side)
         ttk.Button(
             button_frame,
-            text="Close",
-            command=self._on_close,
-        ).pack(side=tk.RIGHT)
+            text="Cancel",
+            command=self._on_cancel_click,
+        ).pack(side=tk.LEFT)
+
+        # Save button (right side) - initially disabled
+        self._save_button = ttk.Button(
+            button_frame,
+            text="Save",
+            command=self._on_save_click,
+            state=tk.DISABLED,
+        )
+        self._save_button.pack(side=tk.RIGHT)
 
         # Handle window close
-        self._window.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._window.protocol("WM_DELETE_WINDOW", self._on_cancel_click)
+
+        # Populate with initial settings (set by controller before show())
+        if hasattr(self, "_settings"):
+            self.populate(self._settings)
+
+        logger.info("settings_view: window created")
 
         # Run the window's event loop
         self._root.mainloop()
+
+    def _init_variables(self) -> None:
+        """Initialize Tkinter variables before creating widgets."""
+        self._vars["mode"] = tk.StringVar(master=self._root, value="push-to-talk")
+        self._vars["audio_feedback"] = tk.BooleanVar(master=self._root, value=True)
+        self._vars["mute_system"] = tk.BooleanVar(master=self._root, value=False)
+        self._vars["auto_paste"] = tk.BooleanVar(master=self._root, value=True)
+        self._vars["paste_delay_ms"] = tk.IntVar(master=self._root, value=50)
+        self._vars["model_name"] = tk.StringVar(master=self._root, value="large-v3")
+        self._vars["device"] = tk.StringVar(master=self._root, value="cuda")
+        self._vars["compute_type"] = tk.StringVar(master=self._root, value="float16")
+        self._vars["language"] = tk.StringVar(master=self._root, value="auto")
+        self._vars["streaming_enabled"] = tk.BooleanVar(master=self._root, value=False)
+
+    def _setup_change_traces(self) -> None:
+        """Set up trace callbacks on all tkinter variables for change detection."""
+        var_names = [
+            "mode",
+            "audio_feedback",
+            "mute_system",
+            "auto_paste",
+            "paste_delay_ms",
+            "model_name",
+            "device",
+            "compute_type",
+            "language",
+            "streaming_enabled",
+        ]
+
+        for var_name in var_names:
+            if var_name in self._vars:
+                self._vars[var_name].trace_add("write", self._on_var_change)
+
+        logger.debug("settings_view: change traces set up for %d variables", len(var_names))
+
+    def _on_var_change(self, *args) -> None:
+        """Handle variable change - notify controller."""
+        if self.on_setting_changed is not None:
+            # Get the variable name from the trace callback args
+            var_name = args[0] if args else "unknown"
+            try:
+                self.on_setting_changed(var_name, None)
+            except Exception as e:
+                logger.error("settings_view: on_setting_changed callback failed: %s", e)
+
+    def _on_save_click(self) -> None:
+        """Handle Save button click."""
+        if self.on_save_requested is not None:
+            try:
+                self.on_save_requested()
+            except Exception as e:
+                logger.error("settings_view: on_save_requested callback failed: %s", e)
+
+    def _on_cancel_click(self) -> None:
+        """Handle Cancel button click or window close."""
+        if self.on_cancel_requested is not None:
+            try:
+                self.on_cancel_requested()
+            except Exception as e:
+                logger.error("settings_view: on_cancel_requested callback failed: %s", e)
+        else:
+            # No controller attached, just close
+            self.close()
+
+    def _create_scrollable_tab(self, notebook: ttk.Notebook, title: str) -> ttk.Frame:
+        """Create a scrollable tab with canvas and inner frame.
+
+        Args:
+            notebook: Parent notebook widget.
+            title: Tab title.
+
+        Returns:
+            The inner frame to pack widgets into.
+        """
+        # Outer frame holds canvas + scrollbar
+        outer = ttk.Frame(notebook)
+        notebook.add(outer, text=title)
+
+        # Canvas for scrolling
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+
+        # Inner frame for actual content
+        inner = ttk.Frame(canvas, padding="10")
+
+        # Create window in canvas
+        canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        # Configure scrolling
+        def on_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            # Make inner frame match canvas width
+            canvas.itemconfig(canvas_window, width=canvas.winfo_width())
+
+        inner.bind("<Configure>", on_configure)
+
+        def on_canvas_configure(event):
+            # Update inner frame width when canvas resizes
+            canvas.itemconfig(canvas_window, width=event.width)
+
+        canvas.bind("<Configure>", on_canvas_configure)
+
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Pack
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Enable mousewheel scrolling when mouse is over this canvas
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def bind_mousewheel(event):
+            canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+        def unbind_mousewheel(event):
+            canvas.unbind_all("<MouseWheel>")
+
+        canvas.bind("<Enter>", bind_mousewheel)
+        canvas.bind("<Leave>", unbind_mousewheel)
+
+        return inner
 
     def _create_general_tab(self, notebook: ttk.Notebook) -> None:
         """Create the General settings tab.
@@ -315,17 +444,11 @@ class SettingsWindow:
         Args:
             notebook: Parent notebook widget.
         """
-        tab = ttk.Frame(notebook, padding="10")
-        notebook.add(tab, text="General")
+        tab = self._create_scrollable_tab(notebook, "General")
 
         # Recording Mode section
         mode_frame = ttk.LabelFrame(tab, text="Recording Mode", padding="10")
         mode_frame.pack(fill=tk.X, pady=(0, 10))
-
-        self._vars["mode"] = tk.StringVar(
-            master=self._root,
-            value=self._config["hotkeys"]["mode"]
-        )
 
         ttk.Radiobutton(
             mode_frame,
@@ -345,14 +468,12 @@ class SettingsWindow:
         hotkey_frame = ttk.LabelFrame(tab, text="Hotkey", padding="10")
         hotkey_frame.pack(fill=tk.X, pady=(0, 10))
 
-        modifiers = self._config["hotkeys"]["modifiers"]
-        hotkey_str = " + ".join(mod.capitalize() for mod in modifiers)
-
-        ttk.Label(
+        self._hotkey_label = ttk.Label(
             hotkey_frame,
-            text=f"Current: {hotkey_str}",
+            text="Current: (loading...)",
             font=("TkDefaultFont", 10, "bold"),
-        ).pack(anchor=tk.W)
+        )
+        self._hotkey_label.pack(anchor=tk.W)
 
         ttk.Label(
             hotkey_frame,
@@ -364,11 +485,6 @@ class SettingsWindow:
         audio_frame = ttk.LabelFrame(tab, text="Audio", padding="10")
         audio_frame.pack(fill=tk.X, pady=(0, 10))
 
-        self._vars["audio_feedback"] = tk.BooleanVar(
-            master=self._root,
-            value=self._config["hotkeys"]["audio_feedback"]
-        )
-
         ttk.Checkbutton(
             audio_frame,
             text="Play sounds when recording starts/stops",
@@ -376,11 +492,6 @@ class SettingsWindow:
             onvalue=True,
             offvalue=False,
         ).pack(anchor=tk.W)
-
-        self._vars["mute_system"] = tk.BooleanVar(
-            master=self._root,
-            value=self._config["hotkeys"].get("mute_system", False)
-        )
 
         ttk.Checkbutton(
             audio_frame,
@@ -394,11 +505,6 @@ class SettingsWindow:
         output_frame = ttk.LabelFrame(tab, text="Output", padding="10")
         output_frame.pack(fill=tk.X, pady=(0, 10))
 
-        self._vars["auto_paste"] = tk.BooleanVar(
-            master=self._root,
-            value=self._config["output"]["auto_paste"]
-        )
-
         ttk.Checkbutton(
             output_frame,
             text="Auto-paste after transcription",
@@ -407,33 +513,11 @@ class SettingsWindow:
             offvalue=False,
         ).pack(anchor=tk.W)
 
-        # Debug: Log the actual tkinter variable values after creation
-        try:
-            import sys
-            from pathlib import Path
-            if getattr(sys, 'frozen', False):
-                debug_file = Path(sys.executable).parent / "settings_debug.txt"
-            else:
-                debug_file = Path.cwd() / "settings_debug.txt"
-            with open(debug_file, "a") as f:
-                f.write(f"\n=== Tkinter Variables After Creation ===\n")
-                f.write(f"audio_feedback BooleanVar.get(): {self._vars['audio_feedback'].get()}\n")
-                f.write(f"mute_system BooleanVar.get(): {self._vars['mute_system'].get()}\n")
-                f.write(f"auto_paste BooleanVar.get(): {self._vars['auto_paste'].get()}\n")
-                f.write(f"mode StringVar.get(): {self._vars['mode'].get()}\n")
-        except Exception:
-            pass
-
         # Paste delay
         delay_frame = ttk.Frame(output_frame)
         delay_frame.pack(fill=tk.X, pady=(5, 0))
 
         ttk.Label(delay_frame, text="Paste delay:").pack(side=tk.LEFT)
-
-        self._vars["paste_delay_ms"] = tk.IntVar(
-            master=self._root,
-            value=self._config["output"]["paste_delay_ms"]
-        )
 
         delay_spinbox = ttk.Spinbox(
             delay_frame,
@@ -447,23 +531,38 @@ class SettingsWindow:
 
         ttk.Label(delay_frame, text="ms").pack(side=tk.LEFT, padx=(2, 0))
 
+        # Advanced section (Streaming)
+        advanced_frame = ttk.LabelFrame(tab, text="Advanced", padding="10")
+        advanced_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Checkbutton(
+            advanced_frame,
+            text="Enable streaming transcription",
+            variable=self._vars["streaming_enabled"],
+            onvalue=True,
+            offvalue=False,
+        ).pack(anchor=tk.W)
+
+        ttk.Label(
+            advanced_frame,
+            text="Processes audio in chunks during recording. "
+            "Faster for long recordings (2+ minutes).",
+            foreground="gray",
+            justify=tk.LEFT,
+            wraplength=380,
+        ).pack(anchor=tk.W, pady=(2, 0))
+
     def _create_model_tab(self, notebook: ttk.Notebook) -> None:
         """Create the Model settings tab.
 
         Args:
             notebook: Parent notebook widget.
         """
-        tab = ttk.Frame(notebook, padding="10")
-        notebook.add(tab, text="Model")
+        tab = self._create_scrollable_tab(notebook, "Model")
 
         # Model selection
         model_frame = ttk.LabelFrame(tab, text="Whisper Model", padding="10")
         model_frame.pack(fill=tk.X, pady=(0, 10))
-
-        self._vars["model_name"] = tk.StringVar(
-            master=self._root,
-            value=self._config["model"]["name"]
-        )
 
         ttk.Label(model_frame, text="Model size:").pack(anchor=tk.W)
 
@@ -485,17 +584,13 @@ class SettingsWindow:
             "large-v3: Best accuracy (recommended)",
             foreground="gray",
             justify=tk.LEFT,
+            wraplength=380,
         )
         size_info.pack(anchor=tk.W)
 
         # Device selection
         device_frame = ttk.LabelFrame(tab, text="Device", padding="10")
         device_frame.pack(fill=tk.X, pady=(0, 10))
-
-        self._vars["device"] = tk.StringVar(
-            master=self._root,
-            value=self._config["model"]["device"]
-        )
 
         ttk.Label(device_frame, text="Processing device:").pack(anchor=tk.W)
 
@@ -514,16 +609,12 @@ class SettingsWindow:
             "cpu: CPU (slower, works everywhere)",
             foreground="gray",
             justify=tk.LEFT,
+            wraplength=380,
         ).pack(anchor=tk.W)
 
         # Compute type selection
         compute_frame = ttk.LabelFrame(tab, text="Compute Type", padding="10")
         compute_frame.pack(fill=tk.X, pady=(0, 10))
-
-        self._vars["compute_type"] = tk.StringVar(
-            master=self._root,
-            value=self._config["model"]["compute_type"]
-        )
 
         ttk.Label(compute_frame, text="Precision:").pack(anchor=tk.W)
 
@@ -543,15 +634,12 @@ class SettingsWindow:
             "float32: Maximum precision (slow)",
             foreground="gray",
             justify=tk.LEFT,
+            wraplength=380,
         ).pack(anchor=tk.W)
 
         # Language selection
         lang_frame = ttk.LabelFrame(tab, text="Language", padding="10")
         lang_frame.pack(fill=tk.X, pady=(0, 10))
-
-        # Get current language or default to auto
-        current_lang = self._config.get("model", {}).get("language", "auto")
-        self._vars["language"] = tk.StringVar(master=self._root, value=current_lang)
 
         ttk.Label(lang_frame, text="Transcription language:").pack(anchor=tk.W)
 
@@ -570,6 +658,7 @@ class SettingsWindow:
             lang_frame,
             text=f"Codes: {lang_names}...",
             foreground="gray",
+            wraplength=380,
         ).pack(anchor=tk.W)
 
     def _create_vocabulary_tab(self, notebook: ttk.Notebook) -> None:
@@ -606,11 +695,6 @@ class SettingsWindow:
         self._vocab_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self._vocab_listbox.yview)
 
-        # Load existing vocabulary
-        vocab = self._config.get("vocabulary", {}).get("words", [])
-        for word in vocab:
-            self._vocab_listbox.insert(tk.END, word)
-
         # Add word frame
         add_frame = ttk.Frame(tab)
         add_frame.pack(fill=tk.X, pady=(10, 0))
@@ -633,64 +717,98 @@ class SettingsWindow:
             command=self._remove_vocab_words,
         ).pack(anchor=tk.E, pady=(5, 0))
 
+    def _validate_vocab_word(self, word: str) -> tuple[bool, str]:
+        """Validate a vocabulary word for TOML safety.
+
+        Args:
+            word: The word to validate.
+
+        Returns:
+            Tuple of (is_valid, cleaned_word_or_error_message).
+        """
+        word = word.strip()
+
+        if not word:
+            return False, "Word cannot be empty"
+
+        if len(word) > 100:
+            return False, "Word too long (max 100 characters)"
+
+        # TOML-unsafe characters that would corrupt config
+        unsafe_chars = {
+            '"': 'double quote',
+            '\\': 'backslash',
+            '\n': 'newline',
+            '\r': 'carriage return',
+            '\t': 'tab',
+        }
+        for char, name in unsafe_chars.items():
+            if char in word:
+                return False, f"Word contains invalid character: {name}"
+
+        return True, word
+
     def _add_vocab_word(self) -> None:
         """Add a word to the vocabulary list."""
-        word = self._vocab_entry.get().strip()
-        if word:
-            # Check for duplicates
-            existing = list(self._vocab_listbox.get(0, tk.END))
-            if word not in existing:
-                self._vocab_listbox.insert(tk.END, word)
-                # Trigger auto-save after adding word
-                self._schedule_save()
+        if self._vocab_entry is None or self._vocab_listbox is None:
+            return
+
+        word = self._vocab_entry.get()
+
+        # Validate the word
+        is_valid, result = self._validate_vocab_word(word)
+        if not is_valid:
+            if result != "Word cannot be empty":  # Don't show error for empty input
+                messagebox.showwarning("Invalid Word", result)
+            return
+
+        word = result  # Use cleaned word
+
+        # Check for duplicates
+        existing = list(self._vocab_listbox.get(0, tk.END))
+        if word in existing:
+            messagebox.showinfo("Duplicate", f"'{word}' is already in the vocabulary list.")
             self._vocab_entry.delete(0, tk.END)
+            return
+
+        self._vocab_listbox.insert(tk.END, word)
+        self._vocab_entry.delete(0, tk.END)
+
+        # Notify controller of change
+        if self.on_setting_changed is not None:
+            self.on_setting_changed("vocabulary_words", None)
 
     def _remove_vocab_words(self) -> None:
         """Remove selected words from the vocabulary list."""
+        if self._vocab_listbox is None:
+            return
+
         # Get selected indices in reverse order to avoid index shifting
         selected = list(self._vocab_listbox.curselection())
         if selected:
             for index in reversed(selected):
                 self._vocab_listbox.delete(index)
-            # Trigger auto-save after removing words
-            self._schedule_save()
 
-    def _on_close(self) -> None:
-        """Handle Close button click or window close.
+            # Notify controller of change
+            if self.on_setting_changed is not None:
+                self.on_setting_changed("vocabulary_words", None)
 
-        Cancels any pending save timer and performs a final immediate save
-        to ensure all changes are persisted before closing.
-        """
-        # Cancel any pending save timer
-        with self._save_lock:
-            if self._save_timer is not None:
-                self._save_timer.cancel()
-                self._save_timer = None
 
-        # Perform a final immediate save to ensure everything is persisted
-        self._do_save()
-
-        self._close()
-
-    def _close(self) -> None:
-        """Close the settings window."""
-        if self._window is not None:
-            self._window.destroy()
-        if self._root is not None:
-            self._root.quit()
-            self._root.destroy()
-        self._window = None
-        self._root = None
+# Convenience alias for backward compatibility
+SettingsWindow = TkinterSettingsView
 
 
 def open_settings(on_settings_changed: Callable[[], None] | None = None) -> None:
     """Open the settings window.
 
-    Convenience function to create and show the settings window.
+    Convenience function that creates the controller and view, then opens settings.
 
     Args:
         on_settings_changed: Optional callback invoked after settings are saved.
-                             Used to notify the app to apply changes (e.g., restart hotkey listener).
+                             Used to notify the app to apply changes.
     """
-    window = SettingsWindow(on_settings_changed=on_settings_changed)
-    window.show()
+    from localwispr.settings_controller import SettingsController
+
+    view = TkinterSettingsView()
+    controller = SettingsController(view, on_settings_applied=on_settings_changed)
+    controller.open()

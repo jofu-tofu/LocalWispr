@@ -181,6 +181,7 @@ class TestSettingsWindowSaveLogic:
             "device": MagicMock(get=lambda: "cuda"),
             "compute_type": MagicMock(get=lambda: "float16"),
             "language": MagicMock(get=lambda: "auto"),
+            "streaming_enabled": MagicMock(get=lambda: False),
         }
 
         # Mock vocabulary listbox
@@ -201,6 +202,121 @@ class TestSettingsWindowSaveLogic:
 
         assert saved_config["hotkeys"]["mode"] == "toggle"
         assert saved_config["model"]["name"] == "large-v3"
+
+
+class TestVocabularyValidation:
+    """Tests for vocabulary word validation."""
+
+    def test_validate_vocab_word_valid(self):
+        """Test validation accepts valid words."""
+        from localwispr.settings_window import SettingsWindow
+
+        window = SettingsWindow()
+
+        is_valid, result = window._validate_vocab_word("hello")
+        assert is_valid is True
+        assert result == "hello"
+
+    def test_validate_vocab_word_strips_whitespace(self):
+        """Test validation strips leading/trailing whitespace."""
+        from localwispr.settings_window import SettingsWindow
+
+        window = SettingsWindow()
+
+        is_valid, result = window._validate_vocab_word("  hello  ")
+        assert is_valid is True
+        assert result == "hello"
+
+    def test_validate_vocab_word_empty(self):
+        """Test validation rejects empty words."""
+        from localwispr.settings_window import SettingsWindow
+
+        window = SettingsWindow()
+
+        is_valid, result = window._validate_vocab_word("")
+        assert is_valid is False
+        assert "empty" in result.lower()
+
+    def test_validate_vocab_word_whitespace_only(self):
+        """Test validation rejects whitespace-only input."""
+        from localwispr.settings_window import SettingsWindow
+
+        window = SettingsWindow()
+
+        is_valid, result = window._validate_vocab_word("   ")
+        assert is_valid is False
+        assert "empty" in result.lower()
+
+    def test_validate_vocab_word_too_long(self):
+        """Test validation rejects words over 100 characters."""
+        from localwispr.settings_window import SettingsWindow
+
+        window = SettingsWindow()
+
+        long_word = "a" * 101
+        is_valid, result = window._validate_vocab_word(long_word)
+        assert is_valid is False
+        assert "long" in result.lower()
+
+    def test_validate_vocab_word_rejects_quotes(self):
+        """Test validation rejects double quotes (TOML unsafe)."""
+        from localwispr.settings_window import SettingsWindow
+
+        window = SettingsWindow()
+
+        is_valid, result = window._validate_vocab_word('hello"world')
+        assert is_valid is False
+        assert "invalid" in result.lower() or "quote" in result.lower()
+
+    def test_validate_vocab_word_rejects_backslash(self):
+        """Test validation rejects backslashes (TOML unsafe)."""
+        from localwispr.settings_window import SettingsWindow
+
+        window = SettingsWindow()
+
+        is_valid, result = window._validate_vocab_word("hello\\world")
+        assert is_valid is False
+        assert "invalid" in result.lower() or "backslash" in result.lower()
+
+    def test_validate_vocab_word_rejects_newline(self):
+        """Test validation rejects newlines (TOML unsafe)."""
+        from localwispr.settings_window import SettingsWindow
+
+        window = SettingsWindow()
+
+        is_valid, result = window._validate_vocab_word("hello\nworld")
+        assert is_valid is False
+        assert "invalid" in result.lower() or "newline" in result.lower()
+
+    def test_validate_vocab_word_rejects_tab(self):
+        """Test validation rejects tabs (TOML unsafe)."""
+        from localwispr.settings_window import SettingsWindow
+
+        window = SettingsWindow()
+
+        is_valid, result = window._validate_vocab_word("hello\tworld")
+        assert is_valid is False
+        assert "invalid" in result.lower() or "tab" in result.lower()
+
+    def test_validate_vocab_word_accepts_spaces(self):
+        """Test validation accepts words with internal spaces."""
+        from localwispr.settings_window import SettingsWindow
+
+        window = SettingsWindow()
+
+        is_valid, result = window._validate_vocab_word("hello world")
+        assert is_valid is True
+        assert result == "hello world"
+
+    def test_validate_vocab_word_accepts_unicode(self):
+        """Test validation accepts unicode characters."""
+        from localwispr.settings_window import SettingsWindow
+
+        window = SettingsWindow()
+
+        # Common unicode scenarios
+        is_valid, result = window._validate_vocab_word("cafe")
+        assert is_valid is True
 
 
 class TestSettingsWindowMockedGUI:
@@ -231,6 +347,9 @@ class TestSettingsWindowMockedGUI:
     def test_add_vocab_word_duplicate_rejected(self, mocker):
         """Test that duplicate vocabulary words are rejected."""
         from localwispr.settings_window import SettingsWindow
+
+        # Mock messagebox before creating window
+        mocker.patch("localwispr.settings_window.messagebox")
 
         window = SettingsWindow()
 
@@ -294,6 +413,7 @@ class TestSettingsWindowMockedGUI:
             "device": MagicMock(get=lambda: "cuda"),
             "compute_type": MagicMock(get=lambda: "float16"),
             "language": MagicMock(get=lambda: "auto"),
+            "streaming_enabled": MagicMock(get=lambda: False),
         }
 
         # Mock vocabulary listbox

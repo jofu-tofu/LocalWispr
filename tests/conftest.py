@@ -6,10 +6,12 @@ This module provides reusable fixtures for mocking:
 - Clipboard operations (pyperclip)
 - Configuration loading
 - Mode management
+- Synchronous executor for deterministic async testing
 """
 
 from __future__ import annotations
 
+from concurrent.futures import Executor, Future
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,25 +22,38 @@ import pytest
 
 
 # ============================================================================
+# Synchronous Executor for Testing
+# ============================================================================
+
+
+class SynchronousExecutor(Executor):
+    """Executor that runs tasks immediately in calling thread.
+
+    Useful for testing async code deterministically without threading.
+    """
+
+    def submit(self, fn, *args, **kwargs):
+        """Execute fn immediately and return a completed Future."""
+        future = Future()
+        try:
+            result = fn(*args, **kwargs)
+            future.set_result(result)
+        except Exception as e:
+            future.set_exception(e)
+        return future
+
+    def shutdown(self, wait: bool = True) -> None:
+        """No-op shutdown since tasks run synchronously."""
+        pass
+
+
+# ============================================================================
 # Mock Data Classes
 # ============================================================================
 
 
-@dataclass
-class MockSegment:
-    """Mock Whisper transcription segment."""
-
-    text: str
-    start: float = 0.0
-    end: float = 1.0
-
-
-@dataclass
-class MockTranscriptionInfo:
-    """Mock Whisper transcription info."""
-
-    language: str = "en"
-    language_probability: float = 0.99
+# Import shared mock classes from helpers module
+from tests.helpers import MockSegment, MockTranscriptionInfo
 
 
 # ============================================================================
@@ -289,6 +304,21 @@ def mock_mode_manager(mocker, reset_mode_manager):
     from localwispr.modes import ModeManager
 
     return ModeManager(auto_reset=False)
+
+
+# ============================================================================
+# Executor Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def sync_executor():
+    """Provide a synchronous executor for deterministic async testing.
+
+    Returns:
+        SynchronousExecutor that runs tasks immediately.
+    """
+    return SynchronousExecutor()
 
 
 # ============================================================================

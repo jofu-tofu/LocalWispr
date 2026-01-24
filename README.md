@@ -31,6 +31,22 @@ uv run python -m localwispr
 build.bat
 ```
 
+## Building
+
+Two build variants exist for development and production:
+
+| Command | Output | Use Case |
+|---------|--------|----------|
+| `build.bat test` | `dist/LocalWispr-Test/` | Development iteration |
+| `build.bat stable` | `dist/LocalWispr/` | Production release |
+
+**Update stable release:**
+```bash
+build.bat stable
+```
+
+Builds run tests first, then create the EXE (~2-3 min due to dependency analysis).
+
 ## Configuration
 
 Settings stored in `config.toml`:

@@ -2,20 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
-
-@dataclass
-class MockSegment:
-    """Mock Whisper transcription segment."""
-
-    text: str
-    start: float = 0.0
-    end: float = 1.0
+from tests.helpers import MockSegment
 
 
 class TestTranscriptionResult:

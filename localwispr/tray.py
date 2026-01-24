@@ -21,15 +21,14 @@ import logging
 import queue
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from enum import Enum, auto
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
-
-import numpy as np
+from typing import TYPE_CHECKING, Callable, Union
 
 from PIL import Image, ImageDraw
+
+from localwispr.pipeline import PipelineResult, RecordingPipeline
 
 # Import build variant detection
 from localwispr import IS_TEST_BUILD
@@ -247,8 +246,11 @@ class TrayApp:
         self._state = TrayState.IDLE
         self._state_lock = threading.Lock()
 
-        # Thread-safe queue for state updates from external threads
-        self._update_queue: queue.Queue[TrayState] = queue.Queue()
+        # Thread-safe queue for state updates and transcription results
+        # Queue accepts TrayState or ("result", PipelineResult, gen) tuples
+        self._update_queue: queue.Queue[
+            Union[TrayState, tuple[str, PipelineResult | None, int]]
+        ] = queue.Queue()
 
         # Stop event for coordinating shutdown
         self._stop_event = threading.Event()
@@ -259,32 +261,19 @@ class TrayApp:
         # Background threads to join on shutdown
         self._background_threads: list[threading.Thread] = []
 
-        # Recording pipeline components (lazy loaded)
-        self._recorder = None
-        self._transcriber = None
-        self._detector = None
+        # Hotkey listener (lazy loaded)
         self._hotkey_listener = None
 
-        # Lock for thread-safe recorder access
-        self._recorder_lock = threading.Lock()
+        # Track current transcription generation for UI safety
+        self._current_transcription_gen: int = 0
 
-        # Lock for thread-safe transcriber access
-        self._transcriber_lock = threading.Lock()
+        # Initialize mode manager with notification callback
+        from localwispr.modes import get_mode_manager
 
-        # Volume mute state tracking
-        self._was_muted_before_recording = False
-
-        # Model preloading state
-        self._model_preload_complete = threading.Event()
-        self._model_preload_error: Exception | None = None
-
-        # Background transcription processing
-        self._transcription_executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="transcribe",
+        self._mode_manager = get_mode_manager(
+            auto_reset=False,
+            on_mode_change=self._on_mode_changed,
         )
-        self._current_generation: int = 0
-        self._generation_lock = threading.Lock()
 
         # Floating overlay widget for visual feedback
         from localwispr.overlay import OverlayWidget
@@ -294,13 +283,14 @@ class TrayApp:
             model_name_callback=self._get_model_name,
         )
 
-        # Initialize mode manager with notification callback
-        from localwispr.modes import get_mode_manager
-
-        self._mode_manager = get_mode_manager(
-            auto_reset=False,
-            on_mode_change=self._on_mode_changed,
+        # Initialize recording pipeline (single source of truth for recording/transcription)
+        self._pipeline = RecordingPipeline(
+            mode_manager=self._mode_manager,
+            on_error=lambda msg: self._overlay.show_error(msg),
         )
+
+        # Register settings invalidation handlers
+        self._register_settings_handlers()
 
         logger.info("tray_app: initialized")
 
@@ -370,14 +360,27 @@ class TrayApp:
                 pass  # Don't let callback errors crash the app
 
     def _process_queue(self) -> None:
-        """Process pending state updates from the queue.
+        """Process pending state updates and transcription results from the queue.
 
         Non-blocking - processes all available updates.
+        Handles both TrayState updates and result tuples from async transcription.
         """
         while True:
             try:
-                new_state = self._update_queue.get_nowait()
-                self._set_state(new_state)
+                item = self._update_queue.get_nowait()
+                if isinstance(item, TrayState):
+                    # Direct state update
+                    self._set_state(item)
+                elif isinstance(item, tuple):
+                    # Transcription result tuple: ("result"|"complete", payload, gen)
+                    msg_type, payload, gen = item
+                    # Check generation before processing
+                    if gen != self._current_transcription_gen:
+                        continue  # Stale, skip
+                    if msg_type == "result":
+                        self._handle_transcription_result(payload)
+                    elif msg_type == "complete":
+                        self._finish_transcription()
             except queue.Empty:
                 break
 
@@ -555,7 +558,7 @@ class TrayApp:
         1. Signal stop to all background threads
         2. Stop hotkey listener
         3. Stop the overlay widget
-        4. Shutdown transcription executor
+        4. Shutdown pipeline (waits for in-flight transcription)
         5. Join threads with timeout
         6. Stop the tray icon
         """
@@ -577,10 +580,9 @@ class TrayApp:
         except Exception:
             pass
 
-        # Shutdown transcription executor (don't wait for pending work)
+        # Shutdown pipeline (waits for in-flight transcription)
         try:
-            self._transcription_executor.shutdown(wait=False, cancel_futures=True)
-            logger.debug("tray_app: transcription executor shutdown")
+            self._pipeline.shutdown(timeout=5.0)
         except Exception:
             pass
 
@@ -601,38 +603,18 @@ class TrayApp:
         """Callback when recording should start.
 
         Called by the hotkey listener when the hotkey chord is activated.
+        Delegates to RecordingPipeline for actual recording.
         """
         from localwispr.config import get_config
         from localwispr.feedback import play_start_beep
 
         logger.info("recording: start")
-        start_time = time.time()
 
-        try:
-            # Load config for settings
-            config = get_config()
+        config = get_config()
+        mute = config["hotkeys"].get("mute_system", False)
 
-            # Mute system audio if enabled
-            if config["hotkeys"].get("mute_system", False):
-                from localwispr.volume import mute_system
-
-                self._was_muted_before_recording = mute_system()
-                logger.debug("recording: system muted (was_muted=%s)", self._was_muted_before_recording)
-
-            # Initialize recorder on first use
-            if self._recorder is None:
-                from localwispr.audio import AudioRecorder
-
-                self._recorder = AudioRecorder()
-                logger.debug("recording: recorder initialized")
-
-            with self._recorder_lock:
-                if self._recorder.is_recording:
-                    logger.warning("recording: already recording")
-                    return
-                self._recorder.start_recording()
-
-            # Update state and show overlay
+        success = self._pipeline.start_recording(mute_system=mute)
+        if success:
             self.update_state(TrayState.RECORDING)
             self._overlay.show_recording()
 
@@ -640,139 +622,80 @@ class TrayApp:
             if config["hotkeys"]["audio_feedback"]:
                 play_start_beep()
 
-            duration_ms = int((time.time() - start_time) * 1000)
-            logger.info("recording: started, duration_ms=%d", duration_ms)
-
-        except Exception as e:
-            logger.error("recording: start failed, error_type=%s", type(e).__name__)
-            # Reset state on error
-            self.update_state(TrayState.IDLE)
+            logger.info("recording: started")
+        else:
+            # Reset hotkey listener on error
             if self._hotkey_listener is not None:
                 self._hotkey_listener.on_transcription_complete()
-
             self._overlay.show_error("Failed to start recording")
 
-    def _restore_system_audio(self) -> None:
-        """Restore system audio mute state after recording."""
+    def _on_record_stop(self) -> None:
+        """Callback when recording should stop and transcription should begin.
+
+        Called by the hotkey listener when the hotkey chord is released.
+        Delegates to RecordingPipeline for async transcription with callbacks.
+        """
         from localwispr.config import get_config
 
+        logger.info("recording: stop, starting async transcription")
+
+        # Update state and show overlay
+        self.update_state(TrayState.TRANSCRIBING)
+        self._overlay.show_transcribing()
+
+        # Reset hotkey listener immediately - user can start new recording
+        if self._hotkey_listener is not None:
+            self._hotkey_listener.on_transcription_complete()
+
+        # Capture config values at stop time (not in callback)
         config = get_config()
-        if config["hotkeys"].get("mute_system", False):
-            from localwispr.volume import restore_mute_state
+        mute = config["hotkeys"].get("mute_system", False)
 
-            restore_mute_state(self._was_muted_before_recording)
-            logger.debug("recording: system mute restored to %s", self._was_muted_before_recording)
+        # Async transcription - callbacks fire on background thread
+        # Note: Callbacks receive generation as a parameter from pipeline,
+        # avoiding closure bug where gen wasn't defined at lambda creation time
+        gen = self._pipeline.stop_and_transcribe_async(
+            mute_system=mute,
+            on_result=lambda r, g: self._queue_result_callback(r, g),
+            on_complete=lambda g: self._queue_complete_callback(g),
+        )
+        self._current_transcription_gen = gen
 
-    def _get_recorded_audio(self) -> "np.ndarray | None":
-        """Get recorded audio from the recorder.
-
-        Returns:
-            Audio array if successful, None if no audio or not recording.
-        """
-        import numpy as np
-
-        with self._recorder_lock:
-            if self._recorder is None or not self._recorder.is_recording:
-                logger.warning("recording: not recording, skipping transcription")
-                return None
-            audio = self._recorder.get_whisper_audio()
-
-        # Check if we have audio
-        audio_duration = len(audio) / 16000.0
-        if audio_duration < 0.1:
-            logger.warning("recording: no audio captured")
-            self._overlay.show_error("No audio captured")
-            return None
-
-        logger.debug("recording: audio captured, duration_s=%.2f", audio_duration)
-        return audio
-
-    def _wait_for_model(self) -> bool:
-        """Wait for the Whisper model to finish preloading.
-
-        Returns:
-            True if model is ready, False on timeout.
-        """
-        if not self._model_preload_complete.is_set():
-            logger.info("transcriber: waiting for model preload")
-            # Wait up to 60 seconds for model to load
-            if not self._model_preload_complete.wait(timeout=60.0):
-                logger.error("transcriber: preload timeout")
-                self._overlay.show_error("Model load timeout")
-                return False
-        return True
-
-    def _get_transcriber(self):
-        """Get or create the transcriber instance.
-
-        Returns:
-            WhisperTranscriber instance.
-        """
-        from localwispr.transcribe import WhisperTranscriber
-
-        with self._transcriber_lock:
-            # Check if preload failed
-            if self._model_preload_error is not None:
-                logger.error("transcriber: preload had error, retrying sync")
-                # Clear the error and try sync load
-                self._model_preload_error = None
-                self._transcriber = None
-
-            # Initialize transcriber if preload failed or wasn't done
-            if self._transcriber is None:
-                logger.info("transcriber: initializing (sync fallback)")
-                self._transcriber = WhisperTranscriber()
-                # Force model load
-                _ = self._transcriber.model
-                logger.info("transcriber: model loaded")
-
-            return self._transcriber
-
-    def _perform_transcription(self, audio: "np.ndarray", transcriber):
-        """Perform transcription using the appropriate mode.
+    def _queue_result_callback(
+        self, result: PipelineResult, generation: int
+    ) -> None:
+        """Queue result handling to UI thread via update queue.
 
         Args:
-            audio: Audio array to transcribe.
-            transcriber: WhisperTranscriber instance.
-
-        Returns:
-            Transcription result.
+            result: Transcription result from pipeline.
+            generation: Generation ID to detect stale results.
         """
-        from localwispr.modes import get_mode_prompt
+        self._update_queue.put(("result", result, generation))
 
-        if self._mode_manager.is_manual_override:
-            # Use mode's prompt directly
-            initial_prompt = get_mode_prompt()
-            result = transcriber.transcribe(audio, initial_prompt=initial_prompt)
-            logger.debug(
-                "transcription: using mode prompt, mode=%s",
-                self._mode_manager.current_mode.name,
-            )
+    def _queue_complete_callback(self, generation: int) -> None:
+        """Queue completion handling to UI thread.
+
+        Args:
+            generation: Generation ID to detect stale results.
+        """
+        self._update_queue.put(("complete", None, generation))
+
+    def _handle_transcription_result(self, result: PipelineResult) -> None:
+        """Handle transcription result on UI thread.
+
+        Args:
+            result: Transcription result from pipeline.
+        """
+        if result.success:
+            self._output_result(result)
         else:
-            # Use context detection for automatic mode selection
-            if self._detector is None:
-                from localwispr.context import ContextDetector
+            self._overlay.show_error(result.error or "Transcription failed")
 
-                self._detector = ContextDetector()
-
-            from localwispr.transcribe import transcribe_with_context
-
-            result = transcribe_with_context(audio, transcriber, self._detector)
-
-        inference_time_ms = int(result.inference_time * 1000)
-        logger.info(
-            "transcription: complete, duration_ms=%d, was_retranscribed=%s",
-            inference_time_ms,
-            result.was_retranscribed,
-        )
-        return result
-
-    def _output_result(self, result, start_time: float) -> None:
+    def _output_result(self, result: PipelineResult) -> None:
         """Output the transcription result.
 
         Args:
-            result: Transcription result.
-            start_time: Pipeline start time for logging.
+            result: Pipeline result with transcription text.
         """
         from localwispr.config import get_config
         from localwispr.output import output_transcription
@@ -788,153 +711,27 @@ class TrayApp:
             play_feedback=config["hotkeys"]["audio_feedback"],
         )
 
-        # Hide overlay on completion (success or paste failure)
-        self._overlay.hide()
-
         if not success:
             logger.warning("output: paste failed, text is in clipboard")
 
-        total_time_ms = int((time.time() - start_time) * 1000)
-        logger.info("pipeline: complete, total_ms=%d", total_time_ms)
-
-    def _on_record_stop(self) -> None:
-        """Callback when recording should stop and transcription should begin.
-
-        Called by the hotkey listener when the hotkey chord is released.
-        Returns immediately after starting background transcription to keep
-        the hotkey listener responsive.
-        """
-        logger.info("recording: stop, starting background transcription")
-
-        # Restore system audio mute state
-        self._restore_system_audio()
-
-        # Update state and show overlay
-        self.update_state(TrayState.TRANSCRIBING)
-        self._overlay.show_transcribing()
-
-        # Get audio from recorder (quick operation)
-        audio = self._get_recorded_audio()
-        if audio is None or len(audio) == 0:
-            self._finish_transcription()
-            return
-
-        # Increment generation to track this transcription
-        with self._generation_lock:
-            self._current_generation += 1
-            generation = self._current_generation
-
-        # Reset hotkey listener state immediately - user can start new recording
-        # Note: We keep TRANSCRIBING state visible until background work completes
-        if self._hotkey_listener is not None:
-            self._hotkey_listener.on_transcription_complete()
-
-        # Process in background - this returns immediately
-        self._transcription_executor.submit(
-            self._process_transcription_background,
-            audio,
-            generation,
+        logger.info(
+            "pipeline: output complete, audio_duration_s=%.2f, inference_ms=%d",
+            result.audio_duration,
+            int(result.inference_time * 1000),
         )
 
     def _finish_transcription(self) -> None:
         """Finish transcription and reset state."""
         self.update_state(TrayState.IDLE)
         self._overlay.hide()
-        if self._hotkey_listener is not None:
-            self._hotkey_listener.on_transcription_complete()
-
-    def _process_transcription_background(
-        self,
-        audio: np.ndarray,
-        generation: int,
-    ) -> None:
-        """Background transcription with timeout and generation check.
-
-        This method runs in a ThreadPoolExecutor to avoid blocking the
-        hotkey listener thread. It checks the generation ID before outputting
-        to handle cases where user started a new recording.
-
-        Args:
-            audio: Audio array to transcribe.
-            generation: Generation ID for this transcription request.
-        """
-        start_time = time.time()
-        HARD_TIMEOUT = 120.0  # 2 minutes
-
-        try:
-            # Check if this transcription is still current
-            with self._generation_lock:
-                if generation != self._current_generation:
-                    logger.info(
-                        "transcription: discarding stale request, gen=%d, current=%d",
-                        generation,
-                        self._current_generation,
-                    )
-                    return
-
-            # Wait for model (with timeout)
-            if not self._model_preload_complete.wait(timeout=30.0):
-                logger.error("transcription: model preload timeout")
-                self._overlay.show_error("Model load timeout")
-                self._finish_transcription()
-                return
-
-            # Get or create transcriber
-            transcriber = self._get_transcriber()
-            if transcriber is None:
-                logger.error("transcription: failed to get transcriber")
-                self._overlay.show_error("Transcription failed")
-                self._finish_transcription()
-                return
-
-            # Perform transcription
-            result = self._perform_transcription(audio, transcriber)
-
-            # Check timeout
-            elapsed = time.time() - start_time
-            if elapsed > HARD_TIMEOUT:
-                logger.warning(
-                    "transcription: exceeded timeout, elapsed_s=%.1f",
-                    elapsed,
-                )
-                self._overlay.show_error("Transcription timeout")
-                self._finish_transcription()
-                return
-
-            # Check generation again before output
-            with self._generation_lock:
-                if generation != self._current_generation:
-                    logger.info(
-                        "transcription: discarding stale result, gen=%d, current=%d",
-                        generation,
-                        self._current_generation,
-                    )
-                    return
-
-            # Output result
-            self._output_result(result, start_time)
-
-        except Exception as e:
-            logger.error("transcription: background failed, error_type=%s", type(e).__name__)
-            self._overlay.show_error("Transcription failed")
-
-        finally:
-            # Always reset state when done (unless a newer generation took over)
-            with self._generation_lock:
-                if generation == self._current_generation:
-                    self.update_state(TrayState.IDLE)
-                    self._overlay.hide()
 
     def _get_current_audio_level(self) -> float:
-        """Get current audio level from recorder for overlay visualization.
+        """Get current audio level from pipeline for overlay visualization.
 
         Returns:
             Audio RMS level (0.0-1.0), or 0.0 if not recording.
         """
-        with self._recorder_lock:
-            if self._recorder is not None and self._recorder.is_recording:
-                return self._recorder.get_rms_level()
-        return 0.0
+        return self._pipeline.get_rms_level()
 
     def _get_model_name(self) -> str:
         """Get current Whisper model name for overlay display.
@@ -942,33 +739,7 @@ class TrayApp:
         Returns:
             Model name (e.g., "large-v3"), or empty string if not loaded.
         """
-        with self._transcriber_lock:
-            if self._transcriber is not None:
-                return self._transcriber.model_name
-        return ""
-
-    def _preload_model_async(self) -> None:
-        """Load Whisper model in background thread.
-
-        This method is run in a daemon thread during startup to preload
-        the ~2GB Whisper model before the user's first transcription request.
-        """
-        try:
-            from localwispr.transcribe import WhisperTranscriber
-
-            logger.info("model_preload: starting")
-            transcriber = WhisperTranscriber()
-            # Trigger actual model load by accessing the model property
-            _ = transcriber.model
-            # Store with lock to avoid race with _on_record_stop
-            with self._transcriber_lock:
-                self._transcriber = transcriber
-            logger.info("model_preload: complete")
-        except Exception as e:
-            logger.error("model_preload: failed, error_type=%s", type(e).__name__)
-            self._model_preload_error = e
-        finally:
-            self._model_preload_complete.set()
+        return self._pipeline.get_model_name()
 
     def _start_hotkey_listener(self) -> None:
         """Start the hotkey listener in a background thread."""
@@ -1020,25 +791,40 @@ class TrayApp:
             logger.error("hotkey_listener: restart failed, error_type=%s", type(e).__name__)
             self._overlay.show_error("Failed to restart hotkey listener")
 
+    def _register_settings_handlers(self) -> None:
+        """Register handlers with the SettingsManager.
+
+        Called during initialization to set up automatic invalidation
+        when settings change.
+        """
+        from localwispr.settings_manager import (
+            InvalidationFlags,
+            get_settings_manager,
+        )
+
+        manager = get_settings_manager()
+        manager.register_handler(
+            InvalidationFlags.HOTKEY_LISTENER,
+            self._restart_hotkey_listener,
+        )
+        manager.register_handler(
+            InvalidationFlags.TRANSCRIBER,
+            self._pipeline.invalidate_transcriber,
+        )
+        manager.register_handler(
+            InvalidationFlags.MODEL_PRELOAD,
+            self._pipeline.clear_model_preload,
+        )
+        logger.debug("tray_app: settings handlers registered")
+
     def _on_settings_changed(self) -> None:
         """Handle settings changed callback from settings window.
 
-        Restarts the hotkey listener and invalidates the transcriber
-        to apply new settings immediately. The transcriber will be
-        recreated on next transcription with new settings (vocabulary,
-        model name, device, etc.).
+        Note: Most work is now done by SettingsManager handlers.
+        This callback is kept for any additional logic that doesn't
+        fit the invalidation pattern.
         """
-        logger.info("tray_app: settings changed, applying")
-        self._restart_hotkey_listener()
-
-        # Invalidate transcriber so it's recreated with new settings
-        with self._transcriber_lock:
-            if self._transcriber is not None:
-                logger.info("tray_app: invalidating transcriber for settings reload")
-                self._transcriber = None
-
-        # Reset model preload state so model reloads on next use
-        self._model_preload_complete.clear()
+        logger.info("tray_app: settings changed callback invoked")
 
     def run(self) -> None:
         """Run the tray application.
@@ -1068,13 +854,9 @@ class TrayApp:
             # Start the floating overlay widget
             self._overlay.start()
 
-            # Start model preloading in background (non-blocking)
-            preload_thread = threading.Thread(
-                target=self._preload_model_async,
-                daemon=True,
-            )
-            preload_thread.start()
-            logger.info("model_preload: thread started")
+            # Start model preloading via pipeline (non-blocking)
+            self._pipeline.preload_model_async()
+            logger.info("model_preload: delegated to pipeline")
 
             # Start the hotkey listener
             try:

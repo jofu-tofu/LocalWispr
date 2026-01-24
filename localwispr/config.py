@@ -72,6 +72,16 @@ class VocabularyConfig(TypedDict):
     words: list[str]  # Custom words for better transcription
 
 
+class StreamingConfig(TypedDict, total=False):
+    """Streaming transcription configuration settings."""
+
+    enabled: bool  # Enable streaming/chunked transcription
+    min_silence_ms: int  # Minimum silence to trigger segment boundary
+    max_segment_duration: float  # Maximum segment duration before forced split
+    min_segment_duration: float  # Minimum segment duration to transcribe
+    overlap_ms: int  # Audio overlap between segments for context
+
+
 class Config(TypedDict, total=False):
     """Full application configuration."""
 
@@ -80,6 +90,7 @@ class Config(TypedDict, total=False):
     context: ContextConfig
     output: OutputConfig
     vocabulary: VocabularyConfig
+    streaming: StreamingConfig
 
 
 DEFAULT_CONFIG: Config = {
@@ -157,6 +168,13 @@ DEFAULT_CONFIG: Config = {
     "output": {
         "auto_paste": True,  # Auto-paste after transcription
         "paste_delay_ms": 50,  # Small delay before paste
+    },
+    "streaming": {
+        "enabled": False,  # Disabled by default (opt-in feature)
+        "min_silence_ms": 800,  # Higher = more accurate, fewer segments
+        "max_segment_duration": 20.0,  # Force split after 20s
+        "min_segment_duration": 2.0,  # Avoid tiny fragments
+        "overlap_ms": 100,  # Context overlap between segments
     },
 }
 
@@ -267,6 +285,28 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
         vocab_str = ", ".join(f'"{w}"' for w in vocab)
         lines.append(f"words = [{vocab_str}]")
         lines.append("")
+
+    # Streaming section
+    streaming = config.get("streaming", {})
+    lines.append("[streaming]")
+    lines.append("# Enable streaming transcription for faster processing of long recordings")
+    lines.append("# When enabled, audio is transcribed in segments during recording")
+    streaming_enabled = "true" if streaming.get("enabled", False) else "false"
+    lines.append(f"enabled = {streaming_enabled}")
+    lines.append("")
+    lines.append("# Minimum silence duration (ms) before triggering segment transcription")
+    lines.append("# Higher = more accurate (fewer segments, more context per transcription)")
+    lines.append(f"min_silence_ms = {streaming.get('min_silence_ms', 800)}")
+    lines.append("")
+    lines.append("# Maximum segment duration (seconds) before forced transcription")
+    lines.append(f"max_segment_duration = {streaming.get('max_segment_duration', 20.0)}")
+    lines.append("")
+    lines.append("# Minimum segment duration (seconds) - avoid tiny fragments")
+    lines.append(f"min_segment_duration = {streaming.get('min_segment_duration', 2.0)}")
+    lines.append("")
+    lines.append("# Audio overlap between segments (ms) for better context")
+    lines.append(f"overlap_ms = {streaming.get('overlap_ms', 100)}")
+    lines.append("")
 
     # Write to file
     with open(config_path, "w", encoding="utf-8") as f:
