@@ -16,6 +16,7 @@ Privacy Note:
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import math
 import queue
@@ -44,8 +45,8 @@ class OverlayState(Enum):
     TRANSCRIBING = auto()
 
 
-# Single overlay color (teal)
-OVERLAY_COLOR = "#17A2B8"
+# Single overlay color (smoky charcoal)
+OVERLAY_COLOR = "#2D3436"
 
 # Overlay dimensions (reduced ~50%)
 PILL_WIDTH = 130
@@ -54,12 +55,12 @@ PILL_RADIUS = 19
 PADDING_BOTTOM = 40
 
 # Waveform bar settings (scaled down)
-NUM_BARS = 5
-BAR_WIDTH = 6
-BAR_GAP = 4
-BAR_MIN_HEIGHT = 6
-BAR_MAX_HEIGHT = 28
-BAR_COLOR = "#FFFFFF"
+NUM_BARS = 9
+BAR_WIDTH = 2
+BAR_GAP = 2
+BAR_MIN_HEIGHT = 2  # Dot-like when silent
+BAR_MAX_HEIGHT = 26
+BAR_COLOR = "#E8E8E8"  # Slightly softer white
 
 # Spinner settings
 SPINNER_RADIUS = 10
@@ -107,6 +108,14 @@ class OverlayWidget:
             model_name_callback: Function that returns current model name (e.g., "large-v3").
                 Called when drawing to display model name on overlay.
         """
+        # Enable DPI awareness for crisp rendering (once per process)
+        if not hasattr(OverlayWidget, '_dpi_awareness_set'):
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+                OverlayWidget._dpi_awareness_set = True
+            except (AttributeError, OSError, WindowsError):
+                pass  # Not on Windows, older Windows, or already set
+
         self._audio_level_callback = audio_level_callback
         self._model_name_callback = model_name_callback
         self._command_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -194,7 +203,7 @@ class OverlayWidget:
         self._root.title(f"{APP_DISPLAY_NAME} Overlay")
         self._root.overrideredirect(True)  # No window decorations
         self._root.attributes("-topmost", True)  # Always on top
-        self._root.attributes("-alpha", 0.9)  # 90% opacity
+        self._root.attributes("-alpha", 0.85)  # Glassier look
 
         # Transparent background color
         self._transparent_color = "#010101"
@@ -294,7 +303,7 @@ class OverlayWidget:
 
         # Draw red pill briefly
         self._canvas.delete("all")
-        self._draw_pill("#DC3545")
+        self._draw_pill("#8B0000")  # Dark red/maroon
         self._root.deiconify()
 
         # Schedule hide after 500ms

@@ -9,9 +9,8 @@ for basic functionality testing.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 
 
 class TestSettingsWindowCreation:
@@ -165,7 +164,6 @@ class TestSettingsWindowSaveLogic:
         window._config = mock_config
 
         # Mock tkinter variables
-        import tkinter as tk
 
         window._root = MagicMock()
         window._window = MagicMock()

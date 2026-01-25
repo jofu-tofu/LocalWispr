@@ -281,9 +281,6 @@ class TkinterSettingsView:
         self._create_model_tab(notebook)
         self._create_vocabulary_tab(notebook)
 
-        # Set up change traces on all variables
-        self._setup_change_traces()
-
         # Create button frame with Save and Cancel buttons
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X)
@@ -310,6 +307,9 @@ class TkinterSettingsView:
         # Populate with initial settings (set by controller before show())
         if hasattr(self, "_settings"):
             self.populate(self._settings)
+
+        # Set up change traces AFTER populate to avoid false dirty state
+        self._setup_change_traces()
 
         logger.info("settings_view: window created")
 

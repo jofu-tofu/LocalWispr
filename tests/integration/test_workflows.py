@@ -9,7 +9,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import numpy as np
-import pytest
 
 from tests.helpers import MockSegment
 
@@ -21,7 +20,8 @@ class TestRecordingWorkflow:
         """Test complete recording → transcription workflow."""
         # Setup config
         mocker.patch("localwispr.config.get_config", return_value=mock_config)
-        mocker.patch("localwispr.config._get_config_path", return_value=tmp_path / "config.toml")
+        mocker.patch("localwispr.config._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
+        mocker.patch("localwispr.config._get_appdata_config_path", return_value=tmp_path / "user-settings.toml")
 
         # Mock audio recorder to return test audio
         mock_recorder = MagicMock()
@@ -43,8 +43,8 @@ class TestRecordingWorkflow:
             return_value=mock_model,
         )
 
-        # Mock output
-        mock_copy = mocker.patch(
+        # Mock output (unused but prevents real clipboard operations)
+        mocker.patch(
             "localwispr.output.copy_to_clipboard",
             return_value=True,
         )
@@ -74,7 +74,8 @@ class TestRecordingWorkflow:
     def test_mode_affects_transcription(self, mocker, mock_config, tmp_path):
         """Test that different modes use different prompts."""
         mocker.patch("localwispr.config.get_config", return_value=mock_config)
-        mocker.patch("localwispr.config._get_config_path", return_value=tmp_path / "config.toml")
+        mocker.patch("localwispr.config._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
+        mocker.patch("localwispr.config._get_appdata_config_path", return_value=tmp_path / "user-settings.toml")
 
         # Reset mode manager
         import localwispr.modes.manager as manager_module

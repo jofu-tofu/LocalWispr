@@ -122,11 +122,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Copy config file to dist folder
+REM Copy config file to dist folder as config-defaults.toml
 echo.
 echo [3/3] Copying config (%VARIANT%)...
 if exist "dist\%OUTPUT_FOLDER%" (
-    copy "%CONFIG_FILE%" "dist\%OUTPUT_FOLDER%\config.toml" >nul
+    copy "%CONFIG_FILE%" "dist\%OUTPUT_FOLDER%\config-defaults.toml" >nul
     if errorlevel 1 (
         echo Warning: Failed to copy %CONFIG_FILE%
     )

@@ -12,13 +12,14 @@ This module provides reusable fixtures for mocking:
 from __future__ import annotations
 
 from concurrent.futures import Executor, Future
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+
+from tests.helpers import MockSegment, MockTranscriptionInfo
 
 
 # ============================================================================
@@ -50,10 +51,6 @@ class SynchronousExecutor(Executor):
 # ============================================================================
 # Mock Data Classes
 # ============================================================================
-
-
-# Import shared mock classes from helpers module
-from tests.helpers import MockSegment, MockTranscriptionInfo
 
 
 # ============================================================================
@@ -357,8 +354,7 @@ def mock_pipeline_dependencies(mocker, mock_config):
     mock_transcriber.model = MagicMock()
     mock_transcriber.is_loaded = True
 
-    segments = [MockSegment(text="test transcription")]
-    info = MockTranscriptionInfo()
+    # Mock transcribe return value with test data
     mock_transcriber.transcribe.return_value = MagicMock(
         text="test transcription",
         segments=[{"start": 0.0, "end": 1.0, "text": "test transcription"}],

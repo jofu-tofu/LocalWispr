@@ -2,31 +2,21 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 
 
 class TestLoadConfig:
     """Tests for load_config function."""
 
-    def test_load_config_creates_defaults_if_missing(self, tmp_path, mocker):
-        """Test that missing config file creates defaults."""
+    def test_load_config_with_explicit_path(self, tmp_path):
+        """Test that explicit config path works (legacy mode for tests)."""
         config_path = tmp_path / "config.toml"
-
-        # Mock _get_config_path to return our test path
-        mocker.patch(
-            "localwispr.config._get_config_path",
-            return_value=config_path,
-        )
 
         from localwispr.config import load_config
 
         config = load_config(config_path)
 
-        # Should create file with defaults
-        assert config_path.exists()
+        # Should use defaults when file doesn't exist
         assert config["model"]["name"] == "large-v3"  # Default
 
     def test_load_config_merges_with_defaults(self, tmp_path):
@@ -172,8 +162,12 @@ class TestGetConfig:
         config_module._cached_config = None
 
         mocker.patch(
-            "localwispr.config._get_config_path",
+            "localwispr.config._get_defaults_path",
             return_value=mock_config_file,
+        )
+        mocker.patch(
+            "localwispr.config._get_appdata_config_path",
+            return_value=mock_config_file.parent / "user-settings.toml",
         )
 
         from localwispr.config import get_config
@@ -193,8 +187,12 @@ class TestGetConfig:
         config_module._cached_config = None
 
         mocker.patch(
-            "localwispr.config._get_config_path",
+            "localwispr.config._get_defaults_path",
             return_value=mock_config_file,
+        )
+        mocker.patch(
+            "localwispr.config._get_appdata_config_path",
+            return_value=mock_config_file.parent / "user-settings.toml",
         )
 
         from localwispr.config import get_config
@@ -219,8 +217,8 @@ class TestReloadConfig:
 
     def test_reload_config_updates_cache(self, mocker, tmp_path):
         """Test that reload_config updates the cached config."""
-        config_path = tmp_path / "config.toml"
-        config_path.write_text("""
+        user_path = tmp_path / "user-settings.toml"
+        user_path.write_text("""
 [model]
 name = "tiny"
 """)
@@ -230,8 +228,12 @@ name = "tiny"
         config_module._cached_config = None
 
         mocker.patch(
-            "localwispr.config._get_config_path",
-            return_value=config_path,
+            "localwispr.config._get_defaults_path",
+            return_value=tmp_path / "config-defaults.toml",
+        )
+        mocker.patch(
+            "localwispr.config._get_appdata_config_path",
+            return_value=user_path,
         )
 
         from localwispr.config import get_config, reload_config
@@ -240,7 +242,7 @@ name = "tiny"
         assert config1["model"]["name"] == "tiny"
 
         # Update file
-        config_path.write_text("""
+        user_path.write_text("""
 [model]
 name = "large-v3"
 """)
@@ -257,8 +259,12 @@ class TestClearConfigCache:
         import localwispr.config as config_module
 
         mocker.patch(
-            "localwispr.config._get_config_path",
+            "localwispr.config._get_defaults_path",
             return_value=mock_config_file,
+        )
+        mocker.patch(
+            "localwispr.config._get_appdata_config_path",
+            return_value=mock_config_file.parent / "user-settings.toml",
         )
 
         from localwispr.config import clear_config_cache, get_config
@@ -277,36 +283,244 @@ class TestClearConfigCache:
         assert config1 is not config2
 
 
-class TestGetConfigPath:
-    """Tests for _get_config_path function."""
+class TestGetDefaultsPath:
+    """Tests for _get_defaults_path function."""
 
-    def test_get_config_path_script_mode(self, mocker):
-        """Test config path in script mode."""
+    def test_get_defaults_path_script_mode(self, mocker):
+        """Test defaults path in script mode."""
         import sys
 
         # Ensure not frozen (default state)
         if hasattr(sys, 'frozen'):
             mocker.patch.object(sys, 'frozen', False)
 
-        from localwispr.config import _get_config_path
+        from localwispr.config import _get_defaults_path
 
-        path = _get_config_path()
+        path = _get_defaults_path()
 
-        # Should be relative to package parent
+        # In script mode, should use config.toml from project root
         assert path.name == "config.toml"
-        # Should be in the project root (parent of localwispr package)
         assert path.parent.name == "LocalWispr"
 
-    def test_get_config_path_frozen_mode(self, mocker, tmp_path):
-        """Test config path in frozen (PyInstaller) mode."""
+    def test_get_defaults_path_frozen_mode(self, mocker, tmp_path):
+        """Test defaults path in frozen (PyInstaller) mode."""
         import sys
 
         # Simulate frozen mode
         mocker.patch.object(sys, "frozen", True, create=True)
         mocker.patch.object(sys, "executable", str(tmp_path / "LocalWispr.exe"))
 
-        from localwispr.config import _get_config_path
+        from localwispr.config import _get_defaults_path
 
-        path = _get_config_path()
+        path = _get_defaults_path()
 
-        assert path == tmp_path / "config.toml"
+        assert path == tmp_path / "config-defaults.toml"
+
+
+class TestGetAppdataConfigPath:
+    """Tests for _get_appdata_config_path function."""
+
+    def test_get_appdata_config_path_stable(self, mocker, tmp_path):
+        """Test AppData path for Stable variant."""
+        import sys
+
+        # Simulate frozen stable build
+        mocker.patch.object(sys, "frozen", True, create=True)
+        mocker.patch.object(sys, "executable", str(tmp_path / "LocalWispr.exe"))
+        mocker.patch.dict("os.environ", {"APPDATA": str(tmp_path / "AppData")})
+
+        from localwispr.config import _get_appdata_config_path
+
+        path = _get_appdata_config_path()
+
+        assert path == tmp_path / "AppData" / "LocalWispr" / "Stable" / "user-settings.toml"
+
+    def test_get_appdata_config_path_test(self, mocker, tmp_path):
+        """Test AppData path for Test variant."""
+        import sys
+
+        # Simulate frozen test build
+        mocker.patch.object(sys, "frozen", True, create=True)
+        mocker.patch.object(sys, "executable", str(tmp_path / "LocalWispr-Test.exe"))
+        mocker.patch.dict("os.environ", {"APPDATA": str(tmp_path / "AppData")})
+
+        from localwispr.config import _get_appdata_config_path
+
+        path = _get_appdata_config_path()
+
+        assert path == tmp_path / "AppData" / "LocalWispr" / "Test" / "user-settings.toml"
+
+    def test_get_appdata_config_path_fallback(self, mocker, tmp_path):
+        """Test AppData path fallback when APPDATA env var missing."""
+        import sys
+
+        # Simulate frozen mode without APPDATA env var
+        mocker.patch.object(sys, "frozen", True, create=True)
+        mocker.patch.object(sys, "executable", str(tmp_path / "LocalWispr.exe"))
+        mocker.patch.dict("os.environ", {}, clear=True)
+        mocker.patch("pathlib.Path.home", return_value=tmp_path)
+
+        from localwispr.config import _get_appdata_config_path
+
+        path = _get_appdata_config_path()
+
+        assert path == tmp_path / "AppData" / "Roaming" / "LocalWispr" / "Stable" / "user-settings.toml"
+
+
+class TestTwoTierLoading:
+    """Tests for two-tier configuration system."""
+
+    def test_load_config_two_tier_merge(self, tmp_path, mocker):
+        """Test that user overrides win over bundled defaults."""
+        # Create bundled defaults
+        defaults_path = tmp_path / "config-defaults.toml"
+        defaults_path.write_text("""
+[model]
+name = "base"
+device = "cpu"
+
+[vocabulary]
+words = ["default1", "default2"]
+""")
+
+        # Create user overrides
+        user_path = tmp_path / "user-settings.toml"
+        user_path.write_text("""
+[model]
+name = "large-v3"
+
+[vocabulary]
+words = ["custom1", "custom2", "custom3"]
+""")
+
+        mocker.patch("localwispr.config._get_defaults_path", return_value=defaults_path)
+        mocker.patch("localwispr.config._get_appdata_config_path", return_value=user_path)
+
+        from localwispr.config import load_config
+
+        config = load_config()
+
+        # User override should win
+        assert config["model"]["name"] == "large-v3"
+        # But defaults should fill in missing values
+        assert config["model"]["device"] == "cpu"
+        # User vocabulary should completely override
+        assert config["vocabulary"]["words"] == ["custom1", "custom2", "custom3"]
+
+    def test_save_config_creates_appdata_directory(self, tmp_path, mocker, mock_config):
+        """Test that save_config creates AppData directory if missing."""
+        user_path = tmp_path / "LocalWispr" / "Stable" / "user-settings.toml"
+
+        mocker.patch("localwispr.config._get_appdata_config_path", return_value=user_path)
+
+        from localwispr.config import save_config
+
+        # Directory shouldn't exist yet
+        assert not user_path.parent.exists()
+
+        save_config(mock_config)
+
+        # Should create directory and file
+        assert user_path.exists()
+        assert user_path.parent.exists()
+
+
+class TestMigration:
+    """Tests for legacy config migration."""
+
+    def test_migrate_legacy_config(self, tmp_path, mocker):
+        """Test that legacy config.toml migrates to AppData."""
+        import sys
+
+        # Simulate frozen mode
+        mocker.patch.object(sys, "frozen", True, create=True)
+        mocker.patch.object(sys, "executable", str(tmp_path / "LocalWispr.exe"))
+
+        # Create legacy config next to EXE
+        legacy_path = tmp_path / "config.toml"
+        legacy_path.write_text("""
+[model]
+name = "tiny"
+
+[vocabulary]
+words = ["migrated1", "migrated2"]
+""")
+
+        # AppData path for user settings
+        user_path = tmp_path / "AppData" / "LocalWispr" / "Stable" / "user-settings.toml"
+
+        mocker.patch("localwispr.config._get_appdata_config_path", return_value=user_path)
+        mocker.patch("localwispr.config._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
+
+        from localwispr.config import load_config
+
+        # First load should trigger migration
+        config = load_config()
+
+        # User settings should exist with migrated data
+        assert user_path.exists()
+        assert config["model"]["name"] == "tiny"
+        assert config["vocabulary"]["words"] == ["migrated1", "migrated2"]
+
+        # Legacy file should still exist (kept as backup)
+        assert legacy_path.exists()
+
+    def test_migration_skipped_if_already_migrated(self, tmp_path, mocker):
+        """Test that migration doesn't run if user settings already exist."""
+        import sys
+
+        mocker.patch.object(sys, "frozen", True, create=True)
+        mocker.patch.object(sys, "executable", str(tmp_path / "LocalWispr.exe"))
+
+        # Create both legacy and user settings
+        legacy_path = tmp_path / "config.toml"
+        legacy_path.write_text("""
+[model]
+name = "tiny"
+""")
+
+        user_path = tmp_path / "AppData" / "LocalWispr" / "Stable" / "user-settings.toml"
+        user_path.parent.mkdir(parents=True)
+        user_path.write_text("""
+[model]
+name = "large-v3"
+""")
+
+        mocker.patch("localwispr.config._get_appdata_config_path", return_value=user_path)
+        mocker.patch("localwispr.config._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
+
+        from localwispr.config import load_config
+
+        config = load_config()
+
+        # Should use existing user settings, NOT legacy
+        assert config["model"]["name"] == "large-v3"
+
+    def test_migration_handles_errors_gracefully(self, tmp_path, mocker):
+        """Test that migration errors don't crash the app."""
+        import sys
+
+        mocker.patch.object(sys, "frozen", True, create=True)
+        mocker.patch.object(sys, "executable", str(tmp_path / "LocalWispr.exe"))
+
+        # Create legacy config
+        legacy_path = tmp_path / "config.toml"
+        legacy_path.write_text("""
+[model]
+name = "tiny"
+""")
+
+        # Make user path unwritable (simulate permission error)
+        user_path = tmp_path / "AppData" / "LocalWispr" / "Stable" / "user-settings.toml"
+
+        mocker.patch("localwispr.config._get_appdata_config_path", return_value=user_path)
+        mocker.patch("localwispr.config._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
+
+        # Mock mkdir to raise permission error
+        mocker.patch("pathlib.Path.mkdir", side_effect=PermissionError("Access denied"))
+
+        from localwispr.config import load_config
+
+        # Should not crash, just use defaults
+        config = load_config()
+        assert config is not None

@@ -301,8 +301,6 @@ class RecordingPipeline:
             if audio is None:
                 return PipelineResult(success=False, error="No audio captured")
 
-            audio_duration = len(audio) / 16000.0
-
             # Wait for model to be ready
             if not self._wait_for_model():
                 return PipelineResult(success=False, error="Model load timeout")

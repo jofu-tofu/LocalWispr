@@ -2,6 +2,7 @@
 
 import copy
 import logging
+import os
 import sys
 import threading
 import tomllib
@@ -11,24 +12,40 @@ from typing import Any, TypedDict
 logger = logging.getLogger(__name__)
 
 
-def _get_config_path() -> Path:
-    """Get the path to config.toml.
+def _get_appdata_config_path() -> Path:
+    r"""Get path to user settings in AppData.
 
-    When running as a PyInstaller bundle, looks for config.toml next to the EXE.
+    Returns:
+        C:\Users\<user>\AppData\Roaming\LocalWispr\<Stable|Test>\user-settings.toml
+    """
+    # Detect variant from sys.executable name
+    variant = "Test" if "Test" in Path(sys.executable).stem else "Stable"
+
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        appdata = Path.home() / "AppData" / "Roaming"
+
+    return Path(appdata) / "LocalWispr" / variant / "user-settings.toml"
+
+
+def _get_defaults_path() -> Path:
+    """Get the path to bundled default config.
+
+    When running as a PyInstaller bundle, looks for config-defaults.toml next to the EXE.
     Otherwise, looks in the project root (parent of localwispr package).
 
     Returns:
-        Path to config.toml location.
+        Path to config-defaults.toml location.
     """
     # Check if running as frozen PyInstaller bundle
     if getattr(sys, 'frozen', False):
         # Running as compiled EXE - look next to the executable
-        path = Path(sys.executable).parent / "config.toml"
-        logger.info("config_path: frozen mode, path=%s, exists=%s", path, path.exists())
+        path = Path(sys.executable).parent / "config-defaults.toml"
+        logger.info("defaults_path: frozen mode, path=%s, exists=%s", path, path.exists())
     else:
-        # Running as script - look in project root
+        # Running as script - look in project root (use config.toml as source of defaults)
         path = Path(__file__).parent.parent / "config.toml"
-        logger.info("config_path: script mode, path=%s, exists=%s", path, path.exists())
+        logger.info("defaults_path: script mode, path=%s, exists=%s", path, path.exists())
     return path
 
 
@@ -179,38 +196,87 @@ DEFAULT_CONFIG: Config = {
 }
 
 
+def _migrate_legacy_config() -> None:
+    r"""One-time migration from dist\LocalWispr\config.toml to AppData.
+
+    Note: Legacy config.toml is NOT deleted after migration. It remains
+    as a backup and will be ignored in favor of AppData settings.
+    """
+    if not getattr(sys, 'frozen', False):
+        return  # Only for frozen builds
+
+    legacy_path = Path(sys.executable).parent / "config.toml"
+    user_path = _get_appdata_config_path()
+
+    # Already migrated or no legacy config
+    if user_path.exists() or not legacy_path.exists():
+        return
+
+    logger.info("Migrating legacy config from %s to %s", legacy_path, user_path)
+
+    try:
+        user_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(legacy_path, "rb") as f:
+            legacy_config = tomllib.load(f)
+        # Merge with defaults to ensure all required fields exist
+        full_config = _deep_merge(copy.deepcopy(DEFAULT_CONFIG), legacy_config)
+        save_config(full_config, user_path)
+        logger.info("Migration complete - legacy file kept as backup")
+    except Exception as e:
+        logger.warning("Migration failed (non-fatal): %s", e)
+
+
 def load_config(config_path: Path | None = None) -> Config:
-    """Load configuration from TOML file.
+    """Load configuration with two-tier system.
+
+    Priority (highest to lowest):
+    1. User overrides in AppData (persists across rebuilds)
+    2. Bundled defaults (overwritten on rebuild)
+    3. Hardcoded DEFAULT_CONFIG
 
     Args:
-        config_path: Path to config file. Defaults to config.toml next to EXE
-                     (when frozen) or in project root (when running as script).
+        config_path: Optional override path for testing. If None, uses two-tier system.
 
     Returns:
-        Configuration dictionary with defaults applied.
+        Configuration dictionary with all tiers merged.
     """
-    if config_path is None:
-        config_path = _get_config_path()
+    # Migration check (only runs once per install)
+    _migrate_legacy_config()
 
-    logger.debug("load_config: config_path=%s, exists=%s", config_path, config_path.exists())
+    # If explicit path provided, use legacy single-file loading (for tests)
+    if config_path is not None:
+        logger.debug("load_config: explicit path=%s, exists=%s", config_path, config_path.exists())
+        config = copy.deepcopy(DEFAULT_CONFIG)
+        if config_path.exists():
+            with open(config_path, "rb") as f:
+                user_config = tomllib.load(f)
+            config = _deep_merge(config, user_config)
+        return config
 
-    # Use deepcopy to avoid reference issues with nested dicts
+    # Two-tier loading: Start with hardcoded defaults
     config = copy.deepcopy(DEFAULT_CONFIG)
 
-    if config_path.exists():
-        with open(config_path, "rb") as f:
-            user_config = tomllib.load(f)
-        logger.debug("load_config: loaded user_config from file, hotkeys=%s", user_config.get("hotkeys"))
-        config = _deep_merge(config, user_config)
-        logger.debug("load_config: after merge, hotkeys=%s", config.get("hotkeys"))
-    else:
-        # Create default config file for user to edit
-        logger.info("load_config: config file not found at %s, creating from defaults", config_path)
+    # Tier 2: Load bundled defaults (config-defaults.toml)
+    defaults_path = _get_defaults_path()
+    if defaults_path.exists():
         try:
-            save_config(config, config_path)
-            logger.info("load_config: created default config at %s", config_path)
+            with open(defaults_path, "rb") as f:
+                bundled_defaults = tomllib.load(f)
+            config = _deep_merge(config, bundled_defaults)
+            logger.debug("load_config: loaded bundled defaults from %s", defaults_path)
         except Exception as e:
-            logger.warning("load_config: failed to create default config: %s", e)
+            logger.warning("load_config: failed to load bundled defaults: %s", e)
+
+    # Tier 1: Load user overrides from AppData (highest priority)
+    user_path = _get_appdata_config_path()
+    if user_path.exists():
+        try:
+            with open(user_path, "rb") as f:
+                user_overrides = tomllib.load(f)
+            config = _deep_merge(config, user_overrides)
+            logger.info("load_config: loaded user overrides from %s", user_path)
+        except Exception as e:
+            logger.warning("load_config: failed to load user overrides (using defaults): %s", e)
 
     return config
 
@@ -220,11 +286,14 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
 
     Args:
         config: Configuration dictionary to save.
-        config_path: Path to config file. Defaults to config.toml next to EXE
-                     (when frozen) or in project root (when running as script).
+        config_path: Path to config file. Defaults to AppData user-settings.toml
+                     (when frozen) or project root (when running as script).
     """
     if config_path is None:
-        config_path = _get_config_path()
+        config_path = _get_appdata_config_path()
+
+    # Create parent directory if needed
+    config_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Build TOML content with comments
     lines = ["# LocalWispr Configuration", ""]

@@ -7,10 +7,8 @@ requiring a running system tray.
 from __future__ import annotations
 
 import threading
-import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 
 
 class TestTrayState:
@@ -59,7 +57,7 @@ class TestCreateIconImage:
 
     def test_create_icon_default_state(self):
         """Test creating icon with default state."""
-        from localwispr.tray import TrayState, create_icon_image
+        from localwispr.tray import create_icon_image
 
         image = create_icon_image()
 
@@ -93,19 +91,22 @@ class TestCreateIconImage:
 
         assert image.size == (128, 128)
 
-    def test_create_icon_different_states_differ(self):
-        """Test that different states produce different images."""
+    def test_create_icon_same_state_colors(self):
+        """Test that different states use the same color (no state transitions)."""
         from localwispr.tray import TrayState, create_icon_image
 
         idle_icon = create_icon_image(TrayState.IDLE)
         recording_icon = create_icon_image(TrayState.RECORDING)
+        transcribing_icon = create_icon_image(TrayState.TRANSCRIBING)
 
-        # Images should be different (different colors)
+        # Images should be identical (same colors for all states)
         # Compare by converting to bytes
         idle_data = list(idle_icon.getdata())
         recording_data = list(recording_icon.getdata())
+        transcribing_data = list(transcribing_icon.getdata())
 
-        assert idle_data != recording_data
+        assert idle_data == recording_data
+        assert idle_data == transcribing_data
 
 
 class TestTrayAppInitialization:

@@ -28,7 +28,7 @@ modifiers = ["win", "ctrl", "shift"]
 # modifiers = ["ctrl", "alt", "shift"]
 
 # Play audio feedback sounds when recording starts/stops
-audio_feedback = false
+audio_feedback = true
 
 # Privacy note: LocalWispr only monitors modifier key states for hotkey detection.
 # No keystroke logging occurs - regular typing is never captured or recorded.

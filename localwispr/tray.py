@@ -20,7 +20,6 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-import time
 from enum import Enum, auto
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -104,12 +103,12 @@ STATE_COLORS = {
         "background": None,    # Transparent
     },
     TrayState.RECORDING: {
-        "wave": "#DC3545",     # Red wave
+        "wave": "#4A90D9",     # Blue wave (same as idle)
         "letter": "#FFFFFF",   # White L
         "background": None,    # Transparent
     },
     TrayState.TRANSCRIBING: {
-        "wave": "#FFC107",     # Amber/yellow wave
+        "wave": "#4A90D9",     # Blue wave (same as idle)
         "letter": "#FFFFFF",   # White L
         "background": None,    # Transparent
     },
@@ -123,12 +122,12 @@ TEST_STATE_COLORS = {
         "background": None,    # Transparent
     },
     TrayState.RECORDING: {
-        "wave": "#DC3545",     # Red wave (same as stable)
+        "wave": "#FF8C00",     # Orange wave (same as idle)
         "letter": "#FFFFFF",   # White L
         "background": None,    # Transparent
     },
     TrayState.TRANSCRIBING: {
-        "wave": "#FFC107",     # Amber/yellow wave (same as stable)
+        "wave": "#FF8C00",     # Orange wave (same as idle)
         "letter": "#FFFFFF",   # White L
         "background": None,    # Transparent
     },
@@ -392,7 +391,7 @@ class TrayApp:
         """
         import pystray
 
-        from localwispr.modes import ModeType, get_all_modes
+        from localwispr.modes import get_all_modes
 
         # Build transcription modes submenu
         mode_items = []
@@ -434,7 +433,7 @@ class TrayApp:
             pystray.MenuItem("Exit", self._on_exit),
         )
 
-    def _make_mode_callback(self, mode_type: "ModeType"):
+    def _make_mode_callback(self, mode_type):
         """Create a callback for setting a specific transcription mode.
 
         Args:
@@ -450,7 +449,7 @@ class TrayApp:
 
         return callback
 
-    def _make_mode_check(self, mode_type: "ModeType"):
+    def _make_mode_check(self, mode_type):
         """Create a check function for a specific transcription mode.
 
         Args:

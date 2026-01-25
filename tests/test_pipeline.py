@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import threading
-import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
-import pytest
 
 
 class TestPipelineResult:

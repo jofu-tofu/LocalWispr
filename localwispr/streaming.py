@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
 import numpy as np
@@ -108,6 +108,15 @@ class AudioBuffer:
         """
         with self._lock:
             self._source_sample_rate = rate
+
+    def get_transcribed_samples(self) -> int:
+        """Get number of samples already transcribed (at 16kHz rate).
+
+        Returns:
+            Number of 16kHz samples that have been marked as transcribed.
+        """
+        with self._lock:
+            return self._transcribed_samples
 
     def append(self, chunk: np.ndarray) -> None:
         """Add an audio chunk to the buffer.
@@ -236,8 +245,6 @@ class AudioBuffer:
             self._total_samples = 0
             self._transcribed_samples = 0
             self._global_max = 0.0
-            self._converted_cache = None
-            self._cache_valid_samples = 0
 
 
 class VADProcessor:
@@ -474,6 +481,12 @@ class StreamingTranscriber:
         self._transcription_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
+        # Track VAD progress separately from transcription progress
+        # This prevents re-processing the same audio through VAD multiple times
+        self._vad_lock = threading.Lock()  # Dedicated lock for VAD tracker
+        self._vad_processed_samples = 0
+        self._last_transcribed_samples = 0  # Track for wraparound detection
+
         # Context detection state (initialized in start())
         self._context_detector: ContextDetector | None = None
         self._current_context: ContextType = ContextType.GENERAL
@@ -493,6 +506,8 @@ class StreamingTranscriber:
         self._buffer.set_source_sample_rate(source_sample_rate)
         self._buffer.clear()
         self._vad.reset()
+        self._vad_processed_samples = 0  # Reset VAD progress tracker
+        self._last_transcribed_samples = 0  # Reset wraparound tracker
         self._segments = []
         self._total_inference_time = 0.0
         self._pending_segments = []
@@ -523,21 +538,68 @@ class StreamingTranscriber:
         Args:
             chunk: Audio data from sounddevice.
         """
+        # Detect buffer wraparound (max_duration exceeded, old chunks removed)
+        # This handles recordings > 5 minutes gracefully
+        current_transcribed = self._buffer.get_transcribed_samples()
+        if current_transcribed < self._last_transcribed_samples:
+            # Wraparound detected - reset VAD completely
+            logger.warning("streaming: buffer wraparound detected, resetting VAD")
+            self._vad.reset()
+
+            with self._vad_lock:
+                self._vad_processed_samples = 0
+
+            with self._lock:
+                self._pending_segments.clear()
+
+        self._last_transcribed_samples = current_transcribed
+
         # Add to buffer
         self._buffer.append(chunk)
 
-        # Run VAD on pending audio to detect segments
+        # Run VAD on NEW audio only (not all pending)
+        # This prevents re-processing the same audio and avoids inflated sample positions
         pending = self._buffer.get_pending()
-        if pending.size > 0:
-            segments = self._vad.process(pending)
+        pending_size = pending.size
+
+        # Read VAD offset with dedicated lock (minimizes contention)
+        with self._vad_lock:
+            vad_offset = self._vad_processed_samples
+            should_process = pending_size > vad_offset
+
+        if should_process:
+            # Run VAD outside lock (expensive operation)
+            new_audio = pending[vad_offset:]
+            segments = self._vad.process(new_audio)
+
+            # Update tracker with dedicated lock
+            with self._vad_lock:
+                self._vad_processed_samples = pending_size
+
+            # Queue segments with main lock
             if segments:
+                # Translate VAD's global positions to pending-relative coordinates
+                pending_offset = self._buffer.get_transcribed_samples()
+
                 with self._lock:
-                    self._pending_segments.extend(segments)
+                    for seg in segments:
+                        translated_seg = SpeechSegment(
+                            start_sample=seg.start_sample - pending_offset,
+                            end_sample=seg.end_sample - pending_offset,
+                            is_final=seg.is_final,
+                        )
+                        self._pending_segments.append(translated_seg)
 
         # Check for max duration forced split
         pending_duration = self._buffer.get_pending_duration()
         if pending_duration >= self._config.max_segment_duration:
             logger.debug("streaming: forcing segment at %.2fs", pending_duration)
+
+            # Reset VAD (safe: VAD is only written from sounddevice thread,
+            # transcription thread only reads via process() which has internal locking)
+            self._vad.reset()
+
+            # Queue segment with main lock
             with self._lock:
                 # Create forced segment
                 pending_samples = int(pending_duration * WHISPER_SAMPLE_RATE)
@@ -549,9 +611,37 @@ class StreamingTranscriber:
                     )
                 )
 
+            # Reset tracker with dedicated lock
+            with self._vad_lock:
+                self._vad_processed_samples = 0
+
     def _transcription_loop(self) -> None:
         """Background thread for processing transcription segments."""
-        while not self._stop_event.is_set():
+        max_drain_time = 30.0  # Maximum time to spend draining queue (seconds)
+        drain_start = None  # Track when draining started
+
+        while True:
+            if self._stop_event.is_set():
+                with self._lock:
+                    if not self._pending_segments:
+                        break
+                    # Continue processing remaining segments
+                # Check if we're taking too long to drain
+                if drain_start is None:
+                    drain_start = time.perf_counter()
+                    with self._lock:
+                        pending_count = len(self._pending_segments)
+                    if pending_count > 0:
+                        logger.debug("streaming: draining %d pending segments", pending_count)
+                elif time.perf_counter() - drain_start > max_drain_time:
+                    remaining = len(self._pending_segments)
+                    logger.warning(
+                        "streaming: drain timeout, abandoning %d segments after %.1fs",
+                        remaining,
+                        max_drain_time,
+                    )
+                    break
+
             segment = None
             with self._lock:
                 if self._pending_segments:
@@ -631,11 +721,24 @@ class StreamingTranscriber:
         # Calculate overlap for context
         overlap_samples = int(self._config.overlap_ms * WHISPER_SAMPLE_RATE / 1000)
 
+        # Calculate segment boundaries (before clamping for bounds check)
+        start_raw = segment.start_sample - overlap_samples
+        end_raw = segment.end_sample
+
+        # Validate and recover from out-of-bounds segment coordinates
+        if (end_raw > len(pending) or start_raw >= len(pending) or
+            end_raw <= start_raw or start_raw < 0):
+            logger.warning(
+                "streaming: segment out of bounds, attempting recovery: start=%d, end=%d, pending_size=%d",
+                start_raw, end_raw, len(pending)
+            )
+
         # Extract segment audio (with overlap at start if not first segment)
-        start = max(0, segment.start_sample - overlap_samples)
-        end = min(len(pending), segment.end_sample)
+        start = max(0, start_raw)
+        end = min(len(pending), end_raw)
 
         if end <= start:
+            logger.error("streaming: segment recovery failed, skipping")
             return
 
         segment_audio = pending[start:end]
@@ -665,6 +768,23 @@ class StreamingTranscriber:
 
                 # Mark audio as transcribed
                 self._buffer.mark_transcribed(end)
+
+                # Adjust VAD tracker for buffer shift (dedicated lock)
+                with self._vad_lock:
+                    self._vad_processed_samples = max(0, self._vad_processed_samples - end)
+
+                # Update pending segments for buffer shift (main lock)
+                with self._lock:
+                    # Remove segments that are now completely transcribed
+                    self._pending_segments = [
+                        seg for seg in self._pending_segments
+                        if seg.end_sample > end
+                    ]
+
+                    # Adjust remaining segments' coordinates for the shifted buffer
+                    for seg in self._pending_segments:
+                        seg.start_sample = max(0, seg.start_sample - end)
+                        seg.end_sample = seg.end_sample - end
 
                 # Update context based on accumulated text
                 self._maybe_update_context(segment_text)

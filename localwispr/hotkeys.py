@@ -18,12 +18,12 @@ import time
 from enum import Enum, auto
 from typing import Callable
 
-logger = logging.getLogger(__name__)
-
 from pynput import keyboard
 from pynput.keyboard import Key
 
 from localwispr.config import get_config
+
+logger = logging.getLogger(__name__)
 
 
 # Valid modifier names that can be used in config
