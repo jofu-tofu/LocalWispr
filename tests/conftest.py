@@ -64,18 +64,6 @@ def mock_audio_data() -> np.ndarray:
 
 
 @pytest.fixture
-def mock_audio_with_signal() -> np.ndarray:
-    """Generate 1 second of audio with a sine wave signal.
-
-    Returns:
-        NumPy array with sine wave (16kHz, float32).
-    """
-    t = np.linspace(0, 1, 16000, dtype=np.float32)
-    # 440Hz sine wave at 0.5 amplitude
-    return 0.5 * np.sin(2 * np.pi * 440 * t).astype(np.float32)
-
-
-@pytest.fixture
 def mock_stereo_audio() -> np.ndarray:
     """Generate 1 second of stereo audio.
 
@@ -116,39 +104,6 @@ def mock_sounddevice(mocker) -> MagicMock:
 # ============================================================================
 # Transcription Fixtures
 # ============================================================================
-
-
-@pytest.fixture
-def mock_whisper_model(mocker) -> MagicMock:
-    """Mock faster_whisper.WhisperModel.
-
-    Returns:
-        Mock WhisperModel that returns test transcription.
-    """
-    mock_model = MagicMock()
-
-    # Default transcription result
-    segments = [MockSegment(text="test transcription")]
-    info = MockTranscriptionInfo()
-
-    mock_model.transcribe.return_value = (iter(segments), info)
-
-    return mock_model
-
-
-@pytest.fixture
-def mock_whisper_module(mocker, mock_whisper_model) -> MagicMock:
-    """Mock the faster_whisper module.
-
-    Returns:
-        Mock module with WhisperModel class.
-
-    NOTE: Patches faster_whisper.WhisperModel (source) because transcribe.py
-    uses lazy imports (imports WhisperModel inside functions, not at module level).
-    """
-    mock_module = mocker.patch("faster_whisper.WhisperModel")
-    mock_module.return_value = mock_whisper_model
-    return mock_module
 
 
 # ============================================================================
@@ -230,16 +185,6 @@ words = ["LocalWispr", "pytest"]
     return config_file
 
 
-@pytest.fixture
-def patch_get_config(mocker, mock_config):
-    """Patch get_config to return mock configuration.
-
-    Returns:
-        The patched function.
-    """
-    return mocker.patch("localwispr.config.get_config", return_value=mock_config)
-
-
 # ============================================================================
 # Clipboard/Output Fixtures
 # ============================================================================
@@ -295,18 +240,6 @@ def reset_mode_manager():
     manager_module._mode_manager = None
 
 
-@pytest.fixture
-def mock_mode_manager(mocker, reset_mode_manager):
-    """Create a fresh ModeManager for testing.
-
-    Returns:
-        New ModeManager instance.
-    """
-    from localwispr.modes import ModeManager
-
-    return ModeManager(auto_reset=False)
-
-
 # ============================================================================
 # Executor Fixtures
 # ============================================================================
@@ -328,59 +261,15 @@ def sync_executor():
 
 
 @pytest.fixture
-def mock_pipeline_dependencies(mocker, mock_config):
-    """Mock all pipeline dependencies for isolated testing.
-
-    Returns:
-        Dict of all mocked components.
-    """
-    mocks = {}
-
-    # Mock config
-    mocks["config"] = mocker.patch(
-        "localwispr.pipeline.get_config",
-        return_value=mock_config,
-    )
-
-    # Mock AudioRecorder
-    mock_recorder = MagicMock()
-    mock_recorder.is_recording = False
-    mock_recorder.get_whisper_audio.return_value = np.zeros(16000, dtype=np.float32)
-    mock_recorder.get_rms_level.return_value = 0.5
-    mocks["recorder_class"] = mocker.patch(
-        "localwispr.audio.AudioRecorder",
-        return_value=mock_recorder,
-    )
-    mocks["recorder"] = mock_recorder
-
-    # Mock WhisperTranscriber
-    mock_transcriber = MagicMock()
-    mock_transcriber.model = MagicMock()
-    mock_transcriber.is_loaded = True
-
-    # Mock transcribe return value with test data
-    mock_transcriber.transcribe.return_value = MagicMock(
-        text="test transcription",
-        segments=[{"start": 0.0, "end": 1.0, "text": "test transcription"}],
-        inference_time=0.5,
-        audio_duration=1.0,
-        was_retranscribed=False,
-    )
-    mocks["transcriber_class"] = mocker.patch(
-        "localwispr.transcribe.WhisperTranscriber",
-        return_value=mock_transcriber,
-    )
-    mocks["transcriber"] = mock_transcriber
-
-    return mocks
-
-
-@pytest.fixture
 def mock_audio_recorder(mocker):
-    """Mock AudioRecorder with standard test configuration.
+    """Mock AudioRecorder with proper state transitions.
 
     Provides a reusable AudioRecorder mock that can be used across tests
     instead of manually creating the same mock setup repeatedly.
+
+    The mock handles recording state automatically:
+    - start_recording() sets is_recording = True
+    - stop_recording() sets is_recording = False and returns audio
 
     Returns:
         MagicMock configured as AudioRecorder with common test behaviors.
@@ -388,8 +277,27 @@ def mock_audio_recorder(mocker):
     mock_recorder = MagicMock()
     mock_recorder.is_recording = False
     mock_recorder.sample_rate = 16000
-    mock_recorder.get_whisper_audio.return_value = np.zeros(16000, dtype=np.float32)
+
+    # Store audio chunks
+    mock_recorder._audio_buffer = []
+
+    def start_recording_side_effect():
+        mock_recorder.is_recording = True
+
+    def stop_recording_side_effect():
+        mock_recorder.is_recording = False
+        if mock_recorder._audio_buffer:
+            return np.concatenate(mock_recorder._audio_buffer)
+        return np.zeros(16000, dtype=np.float32)
+
+    def get_whisper_audio_side_effect():
+        return stop_recording_side_effect()
+
+    mock_recorder.start_recording.side_effect = start_recording_side_effect
+    mock_recorder.stop_recording.side_effect = stop_recording_side_effect
+    mock_recorder.get_whisper_audio.side_effect = get_whisper_audio_side_effect
     mock_recorder.get_rms_level.return_value = 0.5
+
     mocker.patch("localwispr.audio.AudioRecorder", return_value=mock_recorder)
     return mock_recorder
 
@@ -426,43 +334,9 @@ def mock_whisper_transcriber(mocker):
 # ============================================================================
 
 
-@pytest.fixture
-def mock_window_title(mocker) -> MagicMock:
-    """Mock window title detection.
-
-    Returns:
-        Mock that can be configured with different window titles.
-    """
-    mock = mocker.patch("localwispr.context.pygetwindow")
-    mock.getActiveWindowTitle.return_value = "Test Window"
-    return mock
-
-
 # ============================================================================
 # Utility Fixtures
 # ============================================================================
-
-
-@pytest.fixture
-def temp_dir(tmp_path) -> Path:
-    """Provide a temporary directory for test files.
-
-    Returns:
-        Path to temporary directory.
-    """
-    return tmp_path
-
-
-@pytest.fixture
-def silence_logging(mocker):
-    """Silence all logging during tests.
-
-    Useful for tests that might produce noisy log output.
-    """
-    mocker.patch("logging.Logger.debug")
-    mocker.patch("logging.Logger.info")
-    mocker.patch("logging.Logger.warning")
-    mocker.patch("logging.Logger.error")
 
 
 # ============================================================================
@@ -543,8 +417,10 @@ vad_threshold = 0.5
     mocks["sounddevice"] = mock_sd
 
     # Mock WhisperModel
-    # NOTE: Patch faster_whisper.WhisperModel (source) because transcribe.py
-    # uses lazy imports (imports WhisperModel inside functions, not at module level)
+    # NOTE: Patches faster_whisper.WhisperModel at SOURCE, not usage location.
+    # This is correct: transcribe.py uses TYPE_CHECKING guard (line 16), meaning
+    # WhisperModel is only imported inside methods for lazy loading. Source-level
+    # patching is required for lazy imports - usage location doesn't exist yet.
     mock_whisper_model = MagicMock()
     segments = [MockSegment(text="test transcription")]
     info = MockTranscriptionInfo()
@@ -594,15 +470,22 @@ vad_threshold = 0.5
 
 
 @pytest.fixture
-def settings_flow_helper(mocker):
-    """Helper for simulating settings changes via SettingsController.
+def isolated_config_cache():
+    """Isolate config cache to prevent test interference.
 
-    This fixture provides utilities to test the full settings flow:
-    GUI Change → Controller Save → Manager Apply → Handlers Execute
-
-    Returns:
-        SettingsFlowHelper instance with simulation methods.
+    Use this fixture for tests that modify or stress-test the config cache.
+    Restores original cache state after test completes.
     """
-    from tests.helpers import SettingsFlowHelper
+    from localwispr import config as config_module
+    from localwispr.config import clear_config_cache
 
-    return SettingsFlowHelper(mocker)
+    # Save original state
+    original_cache = config_module._cached_config
+
+    # Clear for test isolation
+    clear_config_cache()
+
+    yield
+
+    # Restore original state
+    config_module._cached_config = original_cache

@@ -661,6 +661,9 @@ class RecordingPipeline:
 
         Args:
             timeout: Max seconds to wait for in-flight work.
+                    Note: ThreadPoolExecutor.shutdown() doesn't support timeout directly,
+                    so this parameter accepts the value but waits indefinitely.
+                    The generation counter ensures stale callbacks are skipped.
         """
         # Set flag to prevent new work and skip callbacks
         with self._generation_lock:
@@ -669,6 +672,8 @@ class RecordingPipeline:
 
         # Shutdown executor only if we own it
         if self._owns_executor:
+            # ThreadPoolExecutor.shutdown() doesn't support timeout parameter
+            # The generation counter ensures stale callbacks are skipped anyway
             self._transcription_executor.shutdown(wait=True)
             logger.info("pipeline: executor shutdown complete")
 

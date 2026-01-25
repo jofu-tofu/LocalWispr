@@ -157,9 +157,9 @@ class TestGetConfig:
     def test_get_config_caches_result(self, mocker, mock_config_file):
         """Test that get_config caches the loaded config."""
         # Clear any existing cache
-        import localwispr.config as config_module
+        from localwispr.config import clear_config_cache
 
-        config_module._cached_config = None
+        clear_config_cache()
 
         mocker.patch(
             "localwispr.config._get_defaults_path",
@@ -182,9 +182,9 @@ class TestGetConfig:
         """Test that get_config is thread-safe."""
         import threading
 
-        import localwispr.config as config_module
+        from localwispr.config import clear_config_cache
 
-        config_module._cached_config = None
+        clear_config_cache()
 
         mocker.patch(
             "localwispr.config._get_defaults_path",
@@ -223,9 +223,9 @@ class TestReloadConfig:
 name = "tiny"
 """)
 
-        import localwispr.config as config_module
+        from localwispr.config import clear_config_cache
 
-        config_module._cached_config = None
+        clear_config_cache()
 
         mocker.patch(
             "localwispr.config._get_defaults_path",
@@ -269,7 +269,7 @@ class TestClearConfigCache:
 
         from localwispr.config import clear_config_cache, get_config
 
-        config_module._cached_config = None
+        clear_config_cache()
 
         config1 = get_config()
         clear_config_cache()
@@ -281,6 +281,86 @@ class TestClearConfigCache:
 
         # New load should create different object
         assert config1 is not config2
+
+
+class TestConfigThreadSafety:
+    """Tests for thread-safe config cache operations."""
+
+    def test_concurrent_get_config_returns_same_object(
+        self, mocker, mock_config_file, isolated_config_cache
+    ):
+        """Test that concurrent get_config calls return same cached object."""
+        import threading
+        from localwispr.config import get_config
+
+        mocker.patch("localwispr.config._get_defaults_path",
+                     return_value=mock_config_file)
+        mocker.patch("localwispr.config._get_appdata_config_path",
+                     return_value=mock_config_file.parent / "user.toml")
+
+        results = []
+        errors = []
+
+        def get_and_store():
+            try:
+                config = get_config()
+                results.append(config)
+            except Exception as e:
+                errors.append(e)
+
+        # Spawn 20 threads calling get_config simultaneously
+        threads = [threading.Thread(target=get_and_store) for _ in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # All should succeed
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+        assert len(results) == 20
+
+        # All should get the SAME object (cached)
+        first_config = results[0]
+        assert all(cfg is first_config for cfg in results), \
+            "get_config should return same cached object"
+
+    def test_reload_config_with_concurrent_access(
+        self, mocker, tmp_path, isolated_config_cache
+    ):
+        """Test reload_config handles concurrent access safely."""
+        import threading
+        from localwispr.config import get_config, reload_config
+
+        config_file = tmp_path / "config-defaults.toml"
+        config_file.write_text('[model]\nname = "tiny"\ndevice = "cpu"')
+
+        mocker.patch("localwispr.config._get_defaults_path",
+                     return_value=config_file)
+        mocker.patch("localwispr.config._get_appdata_config_path",
+                     return_value=tmp_path / "user.toml")
+
+        results = []
+
+        def worker(i):
+            # Every 5th thread reloads, others read
+            if i % 5 == 0:
+                config = reload_config()
+            else:
+                config = get_config()
+            results.append(config)
+
+        threads = [threading.Thread(target=worker, args=(i,))
+                   for i in range(30)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # All should complete without crashes
+        assert len(results) == 30
+        # All configs should be valid
+        assert all(r is not None for r in results)
+        assert all("model" in r for r in results)
 
 
 class TestGetDefaultsPath:
@@ -423,6 +503,65 @@ words = ["custom1", "custom2", "custom3"]
         # Should create directory and file
         assert user_path.exists()
         assert user_path.parent.exists()
+
+    def test_user_overrides_survive_bundled_defaults_update(
+        self, tmp_path, mocker, isolated_config_cache
+    ):
+        """Test that user settings persist when bundled defaults change."""
+        from localwispr.config import get_config, reload_config
+
+        # Initial bundled defaults
+        defaults_path = tmp_path / "config-defaults.toml"
+        defaults_path.write_text('''
+[model]
+name = "base"
+device = "cpu"
+compute_type = "int8"
+
+[hotkeys]
+mode = "push-to-talk"
+''')
+
+        # User overrides (persisted in AppData)
+        user_path = tmp_path / "user-settings.toml"
+        user_path.parent.mkdir(parents=True, exist_ok=True)
+        user_path.write_text('''
+[model]
+name = "large-v3"
+device = "cuda"
+''')
+
+        mocker.patch("localwispr.config._get_defaults_path",
+                     return_value=defaults_path)
+        mocker.patch("localwispr.config._get_appdata_config_path",
+                     return_value=user_path)
+
+        # Initial load
+        config1 = get_config()
+        assert config1["model"]["name"] == "large-v3"  # User override
+        assert config1["model"]["device"] == "cuda"  # User override
+        assert config1["model"]["compute_type"] == "int8"  # From defaults
+
+        # Simulate app rebuild: new bundled defaults
+        defaults_path.write_text('''
+[model]
+name = "base"
+device = "cpu"
+compute_type = "float16"
+
+[hotkeys]
+mode = "voice-activity"
+''')
+
+        # Reload config
+        config2 = reload_config()
+
+        # User overrides still win
+        assert config2["model"]["name"] == "large-v3"
+        assert config2["model"]["device"] == "cuda"
+        # New default fills in where user didn't override
+        assert config2["model"]["compute_type"] == "float16"
+        assert config2["hotkeys"]["mode"] == "voice-activity"
 
 
 class TestMigration:
