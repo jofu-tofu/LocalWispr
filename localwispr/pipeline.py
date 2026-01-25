@@ -538,6 +538,28 @@ class RecordingPipeline:
         if mute_system:
             self._restore_system_audio()
 
+        # Handle streaming mode
+        if self._streaming_enabled and self._streaming_transcriber is not None:
+            logger.debug("transcription: using streaming mode")
+            try:
+                # Finalize streaming (fast - combines segments, no inference)
+                result = self._stop_and_transcribe_streaming(time.time())
+
+                # Invoke callbacks
+                if on_result:
+                    on_result(result, generation)
+                if on_complete:
+                    on_complete(generation)
+
+                return generation
+            except Exception as e:
+                # Fall back to batch mode if streaming fails
+                logger.warning(
+                    "transcription: streaming finalization failed (error=%s), falling back to batch mode",
+                    e,
+                )
+                # Continue to batch processing below (don't return early)
+
         # Get audio synchronously (fast - just numpy array copy, <5ms)
         audio = self._get_recorded_audio()
         if audio is None:

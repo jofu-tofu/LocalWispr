@@ -1032,4 +1032,75 @@ class TestStreamingMode:
         assert result.success is True
         assert result.text == "test transcription"
 
+    def test_stop_and_transcribe_async_streaming_mode(
+        self, mocker, reset_mode_manager, sync_executor
+    ):
+        """Test that async path handles streaming mode correctly."""
+        # Mock recorder
+        mock_recorder = MagicMock()
+        mock_recorder.is_recording = True
+        mocker.patch(
+            "localwispr.audio.AudioRecorder",
+            return_value=mock_recorder,
+        )
+
+        # Mock streaming transcriber with finalize result
+        mock_streaming_result = MagicMock()
+        mock_streaming_result.text = "streaming result"
+        mock_streaming_result.audio_duration = 2.0
+        mock_streaming_result.total_inference_time = 0.5
+        mock_streaming_result.num_segments = 2
+
+        mock_streaming = MagicMock()
+        mock_streaming.finalize.return_value = mock_streaming_result
+
+        # Mock batch transcriber (should NOT be called)
+        mock_transcriber = MagicMock()
+        mocker.patch(
+            "localwispr.transcribe.WhisperTranscriber",
+            return_value=mock_transcriber,
+        )
+
+        from localwispr.modes import ModeManager
+        from localwispr.pipeline import RecordingPipeline
+
+        mode_manager = ModeManager()
+        pipeline = RecordingPipeline(
+            mode_manager=mode_manager,
+            executor=sync_executor,
+        )
+        pipeline._recorder = mock_recorder
+        pipeline._model_preload_complete.set()
+
+        # Enable streaming mode
+        pipeline._streaming_enabled = True
+        pipeline._streaming_transcriber = mock_streaming
+
+        # Callback tracking
+        results = []
+        completed = []
+
+        # Call async version
+        gen = pipeline.stop_and_transcribe_async(
+            on_result=lambda r, g: results.append(r),
+            on_complete=lambda g: completed.append(True),
+        )
+
+        # Should have called streaming finalize, NOT batch processing
+        mock_streaming.finalize.assert_called_once()
+
+        # Should NOT have called get_recorded_audio for batch processing
+        mock_recorder.get_whisper_audio.assert_not_called()
+
+        # Callbacks should be invoked with streaming result
+        assert len(results) == 1
+        assert len(completed) == 1
+
+        # Result should have streaming text
+        result = results[0]
+        assert result.text == "streaming result"
+        assert result.success is True
+        assert result.audio_duration == 2.0
+        assert result.inference_time == 0.5
+
 
