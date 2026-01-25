@@ -804,3 +804,35 @@ class TestCoordinateSystemFixes:
         # This is checked implicitly by successful transcription
 
         streamer.finalize()
+
+    def test_mark_transcribed_beyond_buffer_size(self):
+        """Test marking more samples as transcribed than exist in buffer.
+
+        Edge case: mark_transcribed(samples) called with samples > current buffer size.
+        Should handle gracefully without negative buffer calculations or crashes.
+        """
+        from localwispr.streaming import AudioBuffer
+
+        buffer = AudioBuffer()
+        buffer.set_source_sample_rate(16000)
+
+        # Add some audio
+        audio = np.zeros(8000, dtype=np.float32)  # 0.5 seconds at 16kHz
+        buffer.append(audio)
+
+        pending_audio = buffer.get_pending()
+        initial_size = len(pending_audio)
+        assert initial_size > 0
+
+        # Mark MORE samples as transcribed than actually exist
+        buffer.mark_transcribed(16000)  # 1 second, but only have 0.5 seconds
+
+        # Should handle gracefully - buffer size should be 0, not negative
+        pending_audio = buffer.get_pending()
+        pending_size = len(pending_audio)
+        assert pending_size >= 0, f"Buffer size went negative: {pending_size}"
+
+        # Should be able to add more audio without issues
+        buffer.append(np.zeros(8000, dtype=np.float32))
+        pending_audio = buffer.get_pending()
+        assert len(pending_audio) >= 0

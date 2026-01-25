@@ -258,3 +258,33 @@ class TestListAudioDevices:
         assert len(devices) == 2
         assert devices[0]["name"] == "Microphone 1"
         assert devices[1]["name"] == "Microphone 2"
+
+    def test_device_disconnection_during_recording(self, mocker, mock_sounddevice):
+        """Test handling device disconnection while recording.
+
+        Edge case: Microphone is unplugged or disabled mid-recording.
+        This simulates sounddevice raising an exception in the audio callback.
+        """
+        from localwispr.audio import AudioRecorder
+
+        # Configure mock to raise exception during recording (simulating device disconnect)
+        mock_stream = mock_sounddevice.InputStream.return_value
+        mock_stream.__enter__.return_value = mock_stream
+
+        # Simulate device error via callback
+        def callback_with_error(*args, **kwargs):
+            raise OSError("Device disconnected")
+
+        mock_stream.read.side_effect = callback_with_error
+
+        recorder = AudioRecorder()
+        recorder.start_recording()
+
+        # Attempt to get audio should handle the error gracefully
+        try:
+            audio = recorder.get_whisper_audio()
+            # Should either return empty array or raise a clean error
+            assert isinstance(audio, np.ndarray)
+        except Exception as e:
+            # If it raises, it should be a clean error, not the raw OSError
+            assert "disconnect" in str(e).lower() or "device" in str(e).lower()

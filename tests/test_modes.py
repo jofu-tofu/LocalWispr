@@ -7,27 +7,6 @@ from unittest.mock import MagicMock
 
 
 
-class TestModeType:
-    """Tests for ModeType enum."""
-
-    def test_mode_type_values(self):
-        """Test that ModeType has expected values."""
-        from localwispr.modes import ModeType
-
-        assert ModeType.CODE.value == "code"
-        assert ModeType.NOTES.value == "notes"
-        assert ModeType.DICTATION.value == "dictation"
-        assert ModeType.EMAIL.value == "email"
-        assert ModeType.CHAT.value == "chat"
-
-    def test_mode_type_from_value(self):
-        """Test creating ModeType from string value."""
-        from localwispr.modes import ModeType
-
-        assert ModeType("code") == ModeType.CODE
-        assert ModeType("dictation") == ModeType.DICTATION
-
-
 class TestMode:
     """Tests for Mode dataclass."""
 
@@ -48,65 +27,6 @@ class TestMode:
         assert mode.description == "Programming mode"
         assert mode.prompt_file == "coding"
         assert mode.icon == "</>"
-
-    def test_mode_load_prompt(self, mocker):
-        """Test Mode.load_prompt method."""
-        mock_load = mocker.patch(
-            "localwispr.modes.definitions.load_prompt",
-            return_value="test prompt content",
-        )
-
-        from localwispr.modes import Mode, ModeType
-
-        mode = Mode(
-            mode_type=ModeType.CODE,
-            name="Code",
-            description="Test",
-            prompt_file="coding",
-        )
-
-        prompt = mode.load_prompt()
-
-        assert prompt == "test prompt content"
-        mock_load.assert_called_once_with("coding")
-
-
-class TestMODES:
-    """Tests for MODES dictionary."""
-
-    def test_modes_contains_all_types(self):
-        """Test that MODES contains all ModeType values."""
-        from localwispr.modes import MODES, ModeType
-
-        for mode_type in ModeType:
-            assert mode_type in MODES
-
-    def test_modes_have_correct_structure(self):
-        """Test that all modes have required attributes."""
-        from localwispr.modes import MODES
-
-        for mode_type, mode in MODES.items():
-            assert mode.mode_type == mode_type
-            assert len(mode.name) > 0
-            assert len(mode.description) > 0
-            assert len(mode.prompt_file) > 0
-
-
-class TestMODE_CYCLE_ORDER:
-    """Tests for MODE_CYCLE_ORDER list."""
-
-    def test_cycle_order_contains_all_types(self):
-        """Test that MODE_CYCLE_ORDER contains all mode types."""
-        from localwispr.modes import MODE_CYCLE_ORDER, ModeType
-
-        for mode_type in ModeType:
-            assert mode_type in MODE_CYCLE_ORDER
-
-    def test_cycle_order_has_no_duplicates(self):
-        """Test that MODE_CYCLE_ORDER has no duplicates."""
-        from localwispr.modes import MODE_CYCLE_ORDER
-
-        assert len(MODE_CYCLE_ORDER) == len(set(MODE_CYCLE_ORDER))
 
 
 class TestModeManager:

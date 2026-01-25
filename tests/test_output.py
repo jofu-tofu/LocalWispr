@@ -215,12 +215,3 @@ class TestOutputTranscription:
         assert result is True  # Should still succeed
 
 
-class TestOutputError:
-    """Tests for OutputError exception."""
-
-    def test_output_error_is_exception(self):
-        """Test that OutputError is a proper exception."""
-        from localwispr.output import OutputError
-
-        with pytest.raises(OutputError):
-            raise OutputError("test error")

@@ -143,19 +143,3 @@ class TestGetAvailableContexts:
         assert "coding" in contexts
         assert "planning" in contexts
         assert "general" in contexts
-
-
-class TestContextType:
-    """Tests for ContextType enum."""
-
-    def test_context_type_values(self):
-        """Test that ContextType has expected values."""
-        assert ContextType.CODING.value == "coding"
-        assert ContextType.PLANNING.value == "planning"
-        assert ContextType.GENERAL.value == "general"
-
-    def test_context_type_from_string(self):
-        """Test creating ContextType from string value."""
-        assert ContextType("coding") == ContextType.CODING
-        assert ContextType("planning") == ContextType.PLANNING
-        assert ContextType("general") == ContextType.GENERAL

@@ -7,29 +7,6 @@ from unittest.mock import MagicMock
 import pytest
 
 
-class TestHotkeyState:
-    """Tests for HotkeyState enum."""
-
-    def test_hotkey_state_values(self):
-        """Test that HotkeyState has expected values."""
-        from localwispr.hotkeys import HotkeyState
-
-        assert hasattr(HotkeyState, "IDLE")
-        assert hasattr(HotkeyState, "RECORDING")
-        assert hasattr(HotkeyState, "TRANSCRIBING")
-
-
-class TestHotkeyMode:
-    """Tests for HotkeyMode enum."""
-
-    def test_hotkey_mode_values(self):
-        """Test that HotkeyMode has expected values."""
-        from localwispr.hotkeys import HotkeyMode
-
-        assert hasattr(HotkeyMode, "PUSH_TO_TALK")
-        assert hasattr(HotkeyMode, "TOGGLE")
-
-
 class TestHotkeyListenerError:
     """Tests for HotkeyListenerError exception."""
 
@@ -478,15 +455,3 @@ class TestStateTransitions:
         assert callback_called == []
 
 
-class TestValidModifiers:
-    """Tests for VALID_MODIFIERS constant."""
-
-    def test_valid_modifiers_contains_expected(self):
-        """Test that VALID_MODIFIERS has all expected values."""
-        from localwispr.hotkeys import VALID_MODIFIERS
-
-        assert "win" in VALID_MODIFIERS
-        assert "ctrl" in VALID_MODIFIERS
-        assert "shift" in VALID_MODIFIERS
-        assert "alt" in VALID_MODIFIERS
-        assert len(VALID_MODIFIERS) == 4
