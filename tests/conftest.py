@@ -134,8 +134,8 @@ def mock_config() -> dict[str, Any]:
         "context": {
             "coding_apps": ["code", "pycharm"],
             "planning_apps": ["notion", "obsidian"],
-            "coding_keywords": ["function", "variable", "class"],
-            "planning_keywords": ["task", "project", "deadline"],
+            "coding_keywords": ["function", "variable", "import", "class", "def", "return", "async", "await", "const", "let", "var", "public", "private", "interface", "type", "null", "undefined"],
+            "planning_keywords": ["task", "project", "milestone", "deadline", "goal", "plan", "schedule", "priority", "action", "item", "todo", "complete", "review"],
         },
         "output": {
             "auto_paste": False,
@@ -171,8 +171,8 @@ mute_system = false
 [context]
 coding_apps = ["code", "pycharm"]
 planning_apps = ["notion", "obsidian"]
-coding_keywords = ["function", "variable", "class"]
-planning_keywords = ["task", "project", "deadline"]
+coding_keywords = ["function", "variable", "import", "class", "def", "return", "async", "await", "const", "let", "var", "public", "private", "interface", "type", "null", "undefined"]
+planning_keywords = ["task", "project", "milestone", "deadline", "goal", "plan", "schedule", "priority", "action", "item", "todo", "complete", "review"]
 
 [output]
 auto_paste = false
@@ -385,8 +385,8 @@ mute_system = false
 [context]
 coding_apps = ["code", "pycharm"]
 planning_apps = ["notion", "obsidian"]
-coding_keywords = ["function", "variable", "class"]
-planning_keywords = ["task", "project", "deadline"]
+coding_keywords = ["function", "variable", "import", "class", "def", "return", "async", "await", "const", "let", "var", "public", "private", "interface", "type", "null", "undefined"]
+planning_keywords = ["task", "project", "milestone", "deadline", "goal", "plan", "schedule", "priority", "action", "item", "todo", "complete", "review"]
 
 [output]
 auto_paste = false
