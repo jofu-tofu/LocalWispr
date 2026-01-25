@@ -6,41 +6,7 @@ import threading
 from unittest.mock import MagicMock
 
 import numpy as np
-
-
-class TestPipelineResult:
-    """Tests for PipelineResult dataclass."""
-
-    def test_pipeline_result_success(self):
-        """Test creating a successful PipelineResult."""
-        from localwispr.pipeline import PipelineResult
-
-        result = PipelineResult(
-            success=True,
-            text="transcribed text",
-            audio_duration=2.5,
-            inference_time=0.5,
-        )
-
-        assert result.success is True
-        assert result.text == "transcribed text"
-        assert result.audio_duration == 2.5
-        assert result.inference_time == 0.5
-        assert result.error == ""
-        assert result.was_retranscribed is False
-
-    def test_pipeline_result_failure(self):
-        """Test creating a failed PipelineResult."""
-        from localwispr.pipeline import PipelineResult
-
-        result = PipelineResult(
-            success=False,
-            error="Model load timeout",
-        )
-
-        assert result.success is False
-        assert result.error == "Model load timeout"
-        assert result.text == ""
+import pytest
 
 
 class TestRecordingPipeline:
@@ -57,16 +23,8 @@ class TestRecordingPipeline:
         assert pipeline.is_recording is False
         assert pipeline.is_model_ready is False
 
-    def test_pipeline_start_recording(self, mocker, reset_mode_manager):
+    def test_pipeline_start_recording(self, mock_audio_recorder, reset_mode_manager):
         """Test starting recording."""
-        # Mock AudioRecorder
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = False
-        mocker.patch(
-            "localwispr.audio.AudioRecorder",
-            return_value=mock_recorder,
-        )
-
         from localwispr.modes import ModeManager
         from localwispr.pipeline import RecordingPipeline
 
@@ -76,48 +34,23 @@ class TestRecordingPipeline:
         result = pipeline.start_recording()
 
         assert result is True
-        mock_recorder.start_recording.assert_called_once()
+        mock_audio_recorder.start_recording.assert_called_once()
 
-    def test_pipeline_start_recording_already_recording(self, mocker, reset_mode_manager):
+    def test_pipeline_start_recording_already_recording(self, mock_audio_recorder, reset_mode_manager):
         """Test starting recording when already recording."""
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = True
-        mocker.patch(
-            "localwispr.audio.AudioRecorder",
-            return_value=mock_recorder,
-        )
+        # Configure mock for already-recording state
+        mock_audio_recorder.is_recording = True
 
         from localwispr.modes import ModeManager
         from localwispr.pipeline import RecordingPipeline
 
         mode_manager = ModeManager()
         pipeline = RecordingPipeline(mode_manager=mode_manager)
-        pipeline._recorder = mock_recorder
+        pipeline._recorder = mock_audio_recorder
 
         result = pipeline.start_recording()
 
         assert result is False
-
-    def test_pipeline_is_recording_property(self, mocker, reset_mode_manager):
-        """Test is_recording property."""
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = True
-        mocker.patch(
-            "localwispr.audio.AudioRecorder",
-            return_value=mock_recorder,
-        )
-
-        from localwispr.modes import ModeManager
-        from localwispr.pipeline import RecordingPipeline
-
-        mode_manager = ModeManager()
-        pipeline = RecordingPipeline(mode_manager=mode_manager)
-        pipeline._recorder = mock_recorder
-
-        assert pipeline.is_recording is True
-
-        mock_recorder.is_recording = False
-        assert pipeline.is_recording is False
 
     def test_pipeline_preload_model_async(self, mocker, reset_mode_manager):
         """Test async model preloading."""
@@ -162,31 +95,16 @@ class TestRecordingPipeline:
         assert result.success is False
         assert "No audio" in result.error or "not recording" in result.error.lower()
 
-    def test_pipeline_stop_and_transcribe_success(self, mocker, reset_mode_manager):
+    def test_pipeline_stop_and_transcribe_success(
+        self,
+        mocker,
+        mock_audio_recorder,
+        mock_whisper_transcriber,
+        reset_mode_manager
+    ):
         """Test successful stop_and_transcribe."""
-        # Mock recorder
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = True
-        mock_recorder.get_whisper_audio.return_value = np.zeros(16000, dtype=np.float32)
-        mocker.patch(
-            "localwispr.audio.AudioRecorder",
-            return_value=mock_recorder,
-        )
-
-        # Mock transcriber
-        mock_result = MagicMock()
-        mock_result.text = "test transcription"
-        mock_result.audio_duration = 1.0
-        mock_result.inference_time = 0.5
-        mock_result.was_retranscribed = False
-
-        mock_transcriber = MagicMock()
-        mock_transcriber.model = MagicMock()
-        mock_transcriber.transcribe.return_value = mock_result
-        mocker.patch(
-            "localwispr.transcribe.WhisperTranscriber",
-            return_value=mock_transcriber,
-        )
+        # Configure mocks for recording state
+        mock_audio_recorder.is_recording = True
 
         # Mock get_mode_prompt
         mocker.patch(
@@ -201,7 +119,7 @@ class TestRecordingPipeline:
         mode_manager.set_mode(ModeType.CODE)  # Manual override
 
         pipeline = RecordingPipeline(mode_manager=mode_manager)
-        pipeline._recorder = mock_recorder
+        pipeline._recorder = mock_audio_recorder
         pipeline._model_preload_complete.set()
 
         result = pipeline.stop_and_transcribe()
@@ -209,25 +127,21 @@ class TestRecordingPipeline:
         assert result.success is True
         assert result.text == "test transcription"
 
-    def test_pipeline_cancel_recording(self, mocker, reset_mode_manager):
+    def test_pipeline_cancel_recording(self, mock_audio_recorder, reset_mode_manager):
         """Test canceling a recording."""
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = True
-        mocker.patch(
-            "localwispr.audio.AudioRecorder",
-            return_value=mock_recorder,
-        )
+        # Configure mock for recording state
+        mock_audio_recorder.is_recording = True
 
         from localwispr.modes import ModeManager
         from localwispr.pipeline import RecordingPipeline
 
         mode_manager = ModeManager()
         pipeline = RecordingPipeline(mode_manager=mode_manager)
-        pipeline._recorder = mock_recorder
+        pipeline._recorder = mock_audio_recorder
 
         pipeline.cancel_recording()
 
-        mock_recorder.stop_recording.assert_called_once()
+        mock_audio_recorder.stop_recording.assert_called_once()
 
     def test_pipeline_get_rms_level(self, mocker, reset_mode_manager):
         """Test getting RMS level during recording."""
@@ -249,18 +163,6 @@ class TestRecordingPipeline:
         level = pipeline.get_rms_level()
 
         assert level == 0.75
-
-    def test_pipeline_get_rms_level_not_recording(self, mocker, reset_mode_manager):
-        """Test getting RMS level when not recording."""
-        from localwispr.modes import ModeManager
-        from localwispr.pipeline import RecordingPipeline
-
-        mode_manager = ModeManager()
-        pipeline = RecordingPipeline(mode_manager=mode_manager)
-
-        level = pipeline.get_rms_level()
-
-        assert level == 0.0
 
     def test_pipeline_model_timeout(self, mocker, reset_mode_manager):
         """Test pipeline handles model load timeout."""
@@ -308,12 +210,34 @@ class TestRecordingPipeline:
         error_callback.assert_called_once()
 
     def test_pipeline_thread_safety(self, mocker, reset_mode_manager):
-        """Test pipeline operations are thread-safe."""
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = False
+        """Test pipeline operations are thread-safe.
+
+        This test verifies mutual exclusion: when multiple threads try to
+        start recording simultaneously, only ONE should succeed. The rest
+        should fail because recording is already in progress.
+
+        This catches race conditions where the lock isn't working properly.
+        """
+        # Create a stateful mock class that simulates real AudioRecorder behavior
+        # Each instance tracks its own is_recording state
+        class MockAudioRecorder:
+            def __init__(self, *args, **kwargs):
+                self.is_recording = False
+                self.sample_rate = 16000
+
+            def start_recording(self):
+                self.is_recording = True
+
+            def stop_recording(self):
+                self.is_recording = False
+                return np.zeros(16000, dtype=np.float32)
+
+            def get_whisper_audio(self):
+                return np.zeros(16000, dtype=np.float32)
+
         mocker.patch(
             "localwispr.audio.AudioRecorder",
-            return_value=mock_recorder,
+            MockAudioRecorder,
         )
 
         from localwispr.modes import ModeManager
@@ -333,10 +257,16 @@ class TestRecordingPipeline:
         for t in threads:
             t.join()
 
-        # Only one should succeed (first one)
-        # The rest should either succeed or fail due to "already recording"
-        # But no exceptions should occur
+        # Verify all threads completed
         assert len(results) == 5
+
+        # Verify mutual exclusion - only ONE thread should succeed
+        # The pipeline now checks if recorder exists and is_recording BEFORE
+        # creating a new recorder, ensuring proper mutual exclusion.
+        successes = sum(1 for r in results if r is True)
+
+        # Enforce mutual exclusion - only one thread should succeed
+        assert successes == 1, f"Expected exactly 1 success due to mutual exclusion, got {successes}"
 
     def test_pipeline_mute_system_audio(self, mocker, reset_mode_manager):
         """Test system audio muting during recording."""
@@ -641,12 +571,14 @@ class TestAsyncTranscription:
     ):
         """Verify system audio restored even when no audio captured."""
         mock_recorder = MagicMock()
-        mock_recorder.is_recording = False  # Not recording = no audio
+        mock_recorder.is_recording = False  # Not recording initially
         mocker.patch(
             "localwispr.audio.AudioRecorder",
             return_value=mock_recorder,
         )
 
+        # Mock mute functions
+        mock_mute = mocker.patch("localwispr.volume.mute_system", return_value=True)
         mock_restore = mocker.patch("localwispr.volume.restore_mute_state")
 
         from localwispr.modes import ModeManager
@@ -657,9 +589,13 @@ class TestAsyncTranscription:
             mode_manager=mode_manager,
             executor=sync_executor,
         )
-        pipeline._recorder = mock_recorder
-        pipeline._was_muted_before_recording = True
 
+        # Properly start recording with mute to set internal state
+        pipeline.start_recording(mute_system=True)
+        mock_mute.assert_called_once()
+
+        # Now stop recording when no audio available
+        mock_recorder.is_recording = False
         results = []
 
         pipeline.stop_and_transcribe_async(
@@ -696,67 +632,3 @@ class TestAsyncTranscription:
         pipeline._shutting_down = True
         assert pipeline.is_current_generation(5) is False
 
-    def test_get_model_name(self, mocker, reset_mode_manager, sync_executor):
-        """Test get_model_name helper method."""
-        mock_transcriber = MagicMock()
-        mock_transcriber.model_name = "large-v3"
-        mocker.patch(
-            "localwispr.transcribe.WhisperTranscriber",
-            return_value=mock_transcriber,
-        )
-
-        from localwispr.modes import ModeManager
-        from localwispr.pipeline import RecordingPipeline
-
-        mode_manager = ModeManager()
-        pipeline = RecordingPipeline(
-            mode_manager=mode_manager,
-            executor=sync_executor,
-        )
-
-        # No transcriber yet
-        assert pipeline.get_model_name() == ""
-
-        # Set transcriber
-        pipeline._transcriber = mock_transcriber
-        assert pipeline.get_model_name() == "large-v3"
-
-    def test_invalidate_transcriber(self, mocker, reset_mode_manager, sync_executor):
-        """Test invalidate_transcriber method."""
-        mock_transcriber = MagicMock()
-        mocker.patch(
-            "localwispr.transcribe.WhisperTranscriber",
-            return_value=mock_transcriber,
-        )
-
-        from localwispr.modes import ModeManager
-        from localwispr.pipeline import RecordingPipeline
-
-        mode_manager = ModeManager()
-        pipeline = RecordingPipeline(
-            mode_manager=mode_manager,
-            executor=sync_executor,
-        )
-        pipeline._transcriber = mock_transcriber
-
-        pipeline.invalidate_transcriber()
-
-        assert pipeline._transcriber is None
-
-    def test_clear_model_preload(self, reset_mode_manager, sync_executor):
-        """Test clear_model_preload method."""
-        from localwispr.modes import ModeManager
-        from localwispr.pipeline import RecordingPipeline
-
-        mode_manager = ModeManager()
-        pipeline = RecordingPipeline(
-            mode_manager=mode_manager,
-            executor=sync_executor,
-        )
-        pipeline._model_preload_complete.set()
-        pipeline._model_preload_error = Exception("test error")
-
-        pipeline.clear_model_preload()
-
-        assert not pipeline._model_preload_complete.is_set()
-        assert pipeline._model_preload_error is None

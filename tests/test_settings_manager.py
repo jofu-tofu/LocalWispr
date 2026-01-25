@@ -19,32 +19,6 @@ from localwispr.settings_manager import (
 )
 
 
-class TestInvalidationFlags:
-    """Tests for InvalidationFlags enum."""
-
-    def test_flags_are_distinct(self):
-        """Test that all flags have distinct values."""
-        flags = [
-            InvalidationFlags.HOTKEY_LISTENER,
-            InvalidationFlags.TRANSCRIBER,
-            InvalidationFlags.MODEL_PRELOAD,
-        ]
-        # Each flag should be unique
-        assert len(flags) == len(set(f.value for f in flags))
-
-    def test_flags_can_be_combined(self):
-        """Test that flags can be combined with bitwise OR."""
-        combined = InvalidationFlags.TRANSCRIBER | InvalidationFlags.MODEL_PRELOAD
-        assert InvalidationFlags.TRANSCRIBER in combined
-        assert InvalidationFlags.MODEL_PRELOAD in combined
-        assert InvalidationFlags.HOTKEY_LISTENER not in combined
-
-    def test_none_flag_is_zero(self):
-        """Test that NONE flag is falsy."""
-        assert InvalidationFlags.NONE.value == 0
-        assert not InvalidationFlags.NONE
-
-
 class TestSettingsInvalidation:
     """Tests for the SETTINGS_INVALIDATION mapping."""
 

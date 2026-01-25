@@ -200,6 +200,11 @@ class RecordingPipeline:
 
             # Initialize recorder on first use
             with self._recorder_lock:
+                # Check if already recording BEFORE creating new recorder
+                if self._recorder is not None and self._recorder.is_recording:
+                    logger.warning("recording: already recording")
+                    return False
+
                 # Create new recorder for each recording session
                 from localwispr.audio import AudioRecorder
 
@@ -215,10 +220,6 @@ class RecordingPipeline:
                     self._recorder = AudioRecorder()
                     self._streaming_transcriber = None
                     logger.debug("recording: recorder initialized (batch mode)")
-
-                if self._recorder.is_recording:
-                    logger.warning("recording: already recording")
-                    return False
 
                 self._recorder.start_recording()
 

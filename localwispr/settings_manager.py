@@ -46,7 +46,7 @@ SETTINGS_INVALIDATION: dict[str, InvalidationFlags] = {
     "output.auto_paste": InvalidationFlags.NONE,
     "output.paste_delay_ms": InvalidationFlags.NONE,
     # Streaming
-    "streaming.enabled": InvalidationFlags.NONE,
+    "streaming.enabled": InvalidationFlags.TRANSCRIBER,  # Need to recreate transcription workflow
     "streaming.min_silence_ms": InvalidationFlags.NONE,
     "streaming.max_segment_duration": InvalidationFlags.NONE,
     "streaming.min_segment_duration": InvalidationFlags.NONE,
