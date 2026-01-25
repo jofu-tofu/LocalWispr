@@ -693,12 +693,18 @@ class RecordingPipeline:
         """Get current Whisper model name for display.
 
         Returns:
-            Model name (e.g., "large-v3"), or empty string if not loaded.
+            Model name if loaded, or loading status if still preloading.
         """
         with self._transcriber_lock:
             if self._transcriber is not None:
                 return self._transcriber.model_name
-        return ""
+
+        # Check if model is still loading
+        if not self._model_preload_complete.is_set():
+            return "Loading..."
+
+        # Preload failed, will load synchronously on first transcription
+        return "Initializing..."
 
     def invalidate_transcriber(self) -> None:
         """Invalidate transcriber so it's recreated with new settings.

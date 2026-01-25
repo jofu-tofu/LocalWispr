@@ -243,6 +243,28 @@ class TestRecordingPipeline:
         assert pipeline._model_preload_error is None  # Error cleared
         assert pipeline._transcriber is transcriber  # Stored for reuse
 
+    def test_get_model_name_during_loading(self, mocker, reset_mode_manager):
+        """Test get_model_name returns loading status before model ready."""
+        from localwispr.modes import ModeManager
+        from localwispr.pipeline import RecordingPipeline
+
+        mode_manager = ModeManager()
+        pipeline = RecordingPipeline(mode_manager=mode_manager)
+
+        # Before preload completes
+        assert pipeline.get_model_name() == "Loading..."
+
+        # After preload completes but before transcriber init
+        pipeline._model_preload_complete.set()
+        assert pipeline.get_model_name() == "Initializing..."
+
+        # After transcriber initialized
+        mock_transcriber = mocker.Mock()
+        mock_transcriber.model_name = "large-v3"
+        with pipeline._transcriber_lock:
+            pipeline._transcriber = mock_transcriber
+        assert pipeline.get_model_name() == "large-v3"
+
     def test_pipeline_on_error_callback(self, mocker, reset_mode_manager):
         """Test that on_error callback is invoked when recorder initialization fails."""
         mocker.patch(

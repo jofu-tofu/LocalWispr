@@ -366,7 +366,7 @@ class OverlayWidget:
         return ""
 
     def _draw_model_name(self) -> float:
-        """Draw the model name on the left side of the pill.
+        """Draw the model name or loading status on the left side of the pill.
 
         Returns:
             The x position after the model name (for positioning other elements).
@@ -376,7 +376,7 @@ class OverlayWidget:
 
         model_name = self._get_model_name()
         if not model_name:
-            return MODEL_LEFT_MARGIN
+            model_name = "..."  # Fallback if callback fails
 
         center_y = PILL_HEIGHT // 2
 
