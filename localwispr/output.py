@@ -97,6 +97,8 @@ def paste_to_active_window(delay_ms: int = DEFAULT_PASTE_DELAY_MS) -> bool:
     """
     with _paste_lock:
         try:
+            logger.debug("paste_simulation: attempting with delay_ms=%d", delay_ms)
+
             # Small delay to ensure window focus is stable
             if delay_ms > 0:
                 time.sleep(delay_ms / 1000.0)
@@ -105,6 +107,7 @@ def paste_to_active_window(delay_ms: int = DEFAULT_PASTE_DELAY_MS) -> bool:
 
             # Clear any stuck modifier keys before pasting
             # This prevents conflicts with hotkey chord keys (Win+Ctrl+Shift)
+            logger.debug("paste_simulation: clearing stuck modifier keys")
             for key in (Key.ctrl, Key.ctrl_l, Key.ctrl_r,
                         Key.shift, Key.shift_l, Key.shift_r,
                         Key.alt, Key.alt_l, Key.alt_r,
@@ -114,10 +117,13 @@ def paste_to_active_window(delay_ms: int = DEFAULT_PASTE_DELAY_MS) -> bool:
                 except Exception:
                     pass  # Key may not be pressed, ignore
 
-            # Small delay for keyboard state to settle
-            time.sleep(0.01)  # 10ms
+            # Delay for keyboard state to settle after releasing modifiers
+            # Increased from 10ms to 100ms to ensure Windows clears modifier state
+            logger.debug("paste_simulation: waiting for keyboard state to settle")
+            time.sleep(0.1)  # 100ms
 
             # Simulate Ctrl+V on a clean keyboard state
+            logger.debug("paste_simulation: simulating ctrl+v")
             keyboard.press(Key.ctrl)
             keyboard.press("v")
             keyboard.release("v")
@@ -127,7 +133,11 @@ def paste_to_active_window(delay_ms: int = DEFAULT_PASTE_DELAY_MS) -> bool:
             return True
 
         except Exception as e:
-            logger.error("paste_simulation: failed, error_type=%s", type(e).__name__)
+            logger.error(
+                "paste_simulation: failed, error=%s, error_type=%s",
+                str(e),
+                type(e).__name__,
+            )
             return False
 
 
