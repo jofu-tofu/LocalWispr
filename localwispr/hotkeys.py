@@ -244,7 +244,16 @@ class HotkeyListener:
         Returns:
             True if the key is Win/Cmd (any variant).
         """
-        return key in (Key.cmd, Key.cmd_l, Key.cmd_r)
+        # Check pynput Key constants
+        if key in (Key.cmd, Key.cmd_l, Key.cmd_r):
+            return True
+
+        # Windows virtual key code fallback (VK_LWIN=0x5B, VK_RWIN=0x5C)
+        # pynput may not properly report Windows keys as Key.cmd on Windows
+        if hasattr(key, 'vk'):
+            return key.vk in (0x5B, 0x5C)
+
+        return False
 
     def _is_ctrl_key(self, key: Key | keyboard.KeyCode) -> bool:
         """Check if a key is a Control key.
@@ -408,6 +417,10 @@ class HotkeyListener:
 
         # PRIVACY: Only process modifier keys, ignore all others
         if not self._is_modifier(key):
+            # DEBUG: Log unrecognized keys that might be Windows key
+            if hasattr(key, 'name'):
+                if 'cmd' in str(key).lower() or 'win' in str(key).lower():
+                    logger.debug("hotkey: unrecognized potential Win key: %s", key)
             return
 
         # Update modifier state and record press timestamps
@@ -416,15 +429,19 @@ class HotkeyListener:
             if self._is_win_key(key):
                 self._win_pressed = True
                 self._win_press_time = now
+                logger.debug("hotkey: WIN key pressed, key=%s", key)
             elif self._is_ctrl_key(key):
                 self._ctrl_pressed = True
                 self._ctrl_press_time = now
+                logger.debug("hotkey: CTRL key pressed")
             elif self._is_shift_key(key):
                 self._shift_pressed = True
                 self._shift_press_time = now
+                logger.debug("hotkey: SHIFT key pressed")
             elif self._is_alt_key(key):
                 self._alt_pressed = True
                 self._alt_press_time = now
+                logger.debug("hotkey: ALT key pressed")
 
         # Check for recording chord activation (Win+Ctrl+Shift)
         # Must pass all checks: chord pressed, keys are fresh, not already active
@@ -434,6 +451,10 @@ class HotkeyListener:
                 logger.debug("hotkey: ignoring chord during startup grace period")
                 return
             self._chord_active = True
+            logger.info(
+                "hotkey: CHORD ACTIVATED, win=%s, ctrl=%s, shift=%s, alt=%s",
+                self._win_pressed, self._ctrl_pressed, self._shift_pressed, self._alt_pressed
+            )
             self._on_chord_down()
 
         # Check for mode cycle chord activation (Win+Ctrl+Alt, not Shift)
