@@ -61,7 +61,7 @@ class TestRecordingPipeline:
 
         assert result is False
 
-    def test_pipeline_preload_model_async(self, mocker, reset_mode_manager):
+    def test_pipeline_preload_model_async(self, mocker, reset_mode_manager, mock_model_downloaded):
         """Test async model preloading."""
         mock_transcriber = MagicMock()
         mock_transcriber.model = MagicMock()
@@ -207,7 +207,7 @@ class TestRecordingPipeline:
         assert "timeout" in result.error.lower()
 
     def test_model_preload_failure_triggers_sync_fallback(
-        self, mocker, reset_mode_manager
+        self, mocker, reset_mode_manager, mock_model_downloaded
     ):
         """Test that preload failure is recovered via synchronous loading."""
         # Track transcriber initialization calls
@@ -378,7 +378,7 @@ class TestAsyncTranscription:
     """Tests for async transcription methods."""
 
     def test_stop_and_transcribe_async_success(
-        self, mocker, reset_mode_manager, sync_executor
+        self, mocker, reset_mode_manager, sync_executor, mock_model_downloaded
     ):
         """Verify async transcription returns result via callback."""
         # Mock recorder
@@ -721,6 +721,12 @@ class TestCriticalEdgeCases:
         """Test race condition: start_recording() called while model is preloading."""
         import threading
         import time
+
+        # Mock model as already downloaded (required for preload to proceed)
+        mocker.patch(
+            "localwispr.model_manager.is_model_downloaded",
+            return_value=True,
+        )
 
         # Mock slow model loading
         mock_transcriber = MagicMock()

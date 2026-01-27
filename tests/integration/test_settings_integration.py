@@ -90,13 +90,14 @@ class TestCriticalSettingsPropagation:
         assert invalidate_spy.call_count == 1
         assert clear_preload_spy.call_count == 1
 
-        # Step 6: Verify actual state changed - transcriber should be None
-        assert pipeline._transcriber is None, \
-            "Transcriber should be invalidated (set to None) after model change"
-
-        # Verify preload state was cleared
-        assert not pipeline._model_preload_complete.is_set(), \
-            "Model preload flag should be cleared after model change"
+        # Step 6: Verify preload started for new model
+        # clear_model_preload now immediately starts loading the new model
+        # so we should wait for preload to complete and verify it's ready
+        pipeline._model_preload_complete.wait(timeout=5.0)
+        assert pipeline._model_preload_complete.is_set(), \
+            "Model preload should complete after model change triggers new preload"
+        assert pipeline._transcriber is not None, \
+            "New transcriber should be loaded after model change"
 
         # Step 7: Verify config was updated
         current_config = get_config()

@@ -32,6 +32,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ModelNotDownloadedError(Exception):
+    """Raised when a model is not downloaded and transcription is attempted."""
+
+    pass
+
+
 @dataclass
 class PipelineResult:
     """Result from a recording pipeline execution.
@@ -160,11 +166,33 @@ class RecordingPipeline:
         logger.info("pipeline: model preload thread started")
 
     def _preload_model(self) -> None:
-        """Load Whisper model (runs in background thread)."""
+        """Load Whisper model (runs in background thread).
+
+        Checks if model is downloaded before attempting to load.
+        If model is not downloaded, sets an error and returns early.
+        """
         try:
+            from localwispr.config import get_config
+            from localwispr.model_manager import is_model_downloaded
+
+            config = get_config()
+            model_name = config["model"]["name"]
+
+            # Check if model is downloaded before attempting load
+            if not is_model_downloaded(model_name):
+                logger.info(
+                    "model_preload: model %s not downloaded, skipping preload",
+                    model_name,
+                )
+                self._model_preload_error = ModelNotDownloadedError(
+                    f"Model '{model_name}' not downloaded. "
+                    "Open Settings and download the model first."
+                )
+                return
+
             from localwispr.transcribe import WhisperTranscriber
 
-            logger.info("model_preload: starting")
+            logger.info("model_preload: starting for %s", model_name)
             transcriber = WhisperTranscriber()
             # Trigger actual model load by accessing the model property
             _ = transcriber.model
@@ -173,7 +201,12 @@ class RecordingPipeline:
                 self._transcriber = transcriber
             logger.info("model_preload: complete")
         except Exception as e:
-            logger.error("model_preload: failed, error_type=%s", type(e).__name__)
+            logger.error(
+                "model_preload: failed, error_type=%s, error=%s",
+                type(e).__name__,
+                str(e),
+                exc_info=True,
+            )
             self._model_preload_error = e
         finally:
             self._model_preload_complete.set()
@@ -309,6 +342,12 @@ class RecordingPipeline:
             # Get transcriber
             transcriber = self._get_transcriber()
             if transcriber is None:
+                # Check if the failure was due to model not downloaded
+                if isinstance(self._model_preload_error, ModelNotDownloadedError):
+                    return PipelineResult(
+                        success=False,
+                        error="Model not downloaded. Open Settings to download.",
+                    )
                 return PipelineResult(success=False, error="Failed to initialize transcriber")
 
             # Perform transcription
@@ -420,7 +459,15 @@ class RecordingPipeline:
         from localwispr.transcribe import WhisperTranscriber
 
         with self._transcriber_lock:
-            # Check if preload failed
+            # Check if preload failed due to model not downloaded
+            if isinstance(self._model_preload_error, ModelNotDownloadedError):
+                logger.error(
+                    "transcriber: model not downloaded, cannot initialize"
+                )
+                # Don't clear the error - keep returning None until model is downloaded
+                return None
+
+            # Check if preload failed for other reasons
             if self._model_preload_error is not None:
                 logger.error("transcriber: preload had error, retrying sync")
                 self._model_preload_error = None
@@ -429,12 +476,34 @@ class RecordingPipeline:
             # Initialize transcriber if preload failed or wasn't done
             if self._transcriber is None:
                 try:
+                    # Check if model is downloaded before sync fallback
+                    from localwispr.config import get_config
+                    from localwispr.model_manager import is_model_downloaded
+
+                    config = get_config()
+                    model_name = config["model"]["name"]
+
+                    if not is_model_downloaded(model_name):
+                        logger.error(
+                            "transcriber: model %s not downloaded, cannot initialize",
+                            model_name,
+                        )
+                        self._model_preload_error = ModelNotDownloadedError(
+                            f"Model '{model_name}' not downloaded."
+                        )
+                        return None
+
                     logger.info("transcriber: initializing (sync fallback)")
                     self._transcriber = WhisperTranscriber()
                     _ = self._transcriber.model
                     logger.info("transcriber: model loaded")
                 except Exception as e:
-                    logger.error("transcriber: init failed, error_type=%s", type(e).__name__)
+                    logger.error(
+                        "transcriber: init failed, error_type=%s, error=%s",
+                        type(e).__name__,
+                        str(e),
+                        exc_info=True,
+                    )
                     return None
 
             return self._transcriber
@@ -619,10 +688,17 @@ class RecordingPipeline:
                 # Get transcriber
                 transcriber = self._get_transcriber()
                 if transcriber is None:
-                    result = PipelineResult(
-                        success=False,
-                        error="Failed to initialize transcriber",
-                    )
+                    # Check if the failure was due to model not downloaded
+                    if isinstance(self._model_preload_error, ModelNotDownloadedError):
+                        result = PipelineResult(
+                            success=False,
+                            error="Model not downloaded. Open Settings to download.",
+                        )
+                    else:
+                        result = PipelineResult(
+                            success=False,
+                            error="Failed to initialize transcriber",
+                        )
                 else:
                     # Perform transcription (uses existing _perform_transcription)
                     trans_result = self._perform_transcription(audio, transcriber)
@@ -739,13 +815,17 @@ class RecordingPipeline:
                 self._transcriber = None
 
     def clear_model_preload(self) -> None:
-        """Clear model preload state so model reloads on next use.
+        """Clear model preload state and start loading new model.
 
         Use this when model-related settings change.
+        The config cache must be reloaded before calling this method.
         """
         self._model_preload_complete.clear()
         self._model_preload_error = None
-        logger.debug("pipeline: model preload state cleared")
+        logger.debug("pipeline: model preload state cleared, starting new preload")
+        # Start loading the new model immediately
+        # Config cache is already updated by settings_controller before this is called
+        self.preload_model_async()
 
 
-__all__ = ["RecordingPipeline", "PipelineResult"]
+__all__ = ["RecordingPipeline", "PipelineResult", "ModelNotDownloadedError"]

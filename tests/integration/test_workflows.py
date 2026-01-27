@@ -16,7 +16,7 @@ from tests.helpers import MockSegment
 class TestRecordingWorkflow:
     """Tests for the complete recording → transcription → output workflow."""
 
-    def test_recording_to_transcription_workflow(self, mocker, mock_config, tmp_path):
+    def test_recording_to_transcription_workflow(self, mocker, mock_config, tmp_path, mock_model_downloaded):
         """Test complete recording → transcription workflow."""
         # Setup config
         mocker.patch("localwispr.config.get_config", return_value=mock_config)
@@ -71,7 +71,7 @@ class TestRecordingWorkflow:
         assert result.success is True
         assert "test transcription" in result.text.lower()
 
-    def test_mode_affects_transcription(self, mocker, mock_config, tmp_path):
+    def test_mode_affects_transcription(self, mocker, mock_config, tmp_path, mock_model_downloaded):
         """Test that different modes use different prompts."""
         mocker.patch("localwispr.config.get_config", return_value=mock_config)
         mocker.patch("localwispr.config._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
@@ -270,7 +270,7 @@ audio_feedback = false
         assert loaded["hotkeys"]["audio_feedback"] is False
 
         # Default values preserved
-        assert loaded["model"]["device"] == "cuda"
+        assert loaded["model"]["device"] == "auto"
         assert loaded["hotkeys"]["mode"] == "push-to-talk"
 
 

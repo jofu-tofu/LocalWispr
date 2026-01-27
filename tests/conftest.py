@@ -256,6 +256,25 @@ def sync_executor():
 
 
 # ============================================================================
+# Model Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def mock_model_downloaded(mocker):
+    """Mock is_model_downloaded to return True.
+
+    Use this fixture when tests need the model to appear downloaded.
+    This is separate from mock_whisper_transcriber so it can be used
+    independently in tests that set up their own transcriber mocks.
+
+    Returns:
+        The mock object for is_model_downloaded.
+    """
+    return mocker.patch("localwispr.model_manager.is_model_downloaded", return_value=True)
+
+
+# ============================================================================
 # Pipeline Fixtures
 # ============================================================================
 
@@ -309,6 +328,9 @@ def mock_whisper_transcriber(mocker):
     Provides a reusable WhisperTranscriber mock with properly structured
     transcription results for testing.
 
+    Also mocks is_model_downloaded to return True, since tests using
+    this fixture expect the model to be available for transcription.
+
     Returns:
         MagicMock configured as WhisperTranscriber with test transcription.
     """
@@ -326,6 +348,10 @@ def mock_whisper_transcriber(mocker):
 
     mock_transcriber.transcribe.return_value = mock_result
     mocker.patch("localwispr.transcribe.WhisperTranscriber", return_value=mock_transcriber)
+
+    # Mock is_model_downloaded to return True so preload_model_async succeeds
+    mocker.patch("localwispr.model_manager.is_model_downloaded", return_value=True)
+
     return mock_transcriber
 
 
@@ -428,6 +454,10 @@ vad_threshold = 0.5
     mock_whisper_class = mocker.patch("faster_whisper.WhisperModel")
     mock_whisper_class.return_value = mock_whisper_model
     mocks["whisper"] = mock_whisper_class
+
+    # Mock is_model_downloaded to return True so model preload succeeds
+    mock_model_downloaded = mocker.patch("localwispr.model_manager.is_model_downloaded", return_value=True)
+    mocks["model_downloaded"] = mock_model_downloaded
 
     # Patch load_config to use temp file
     clear_config_cache()
