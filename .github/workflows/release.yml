@@ -1,0 +1,124 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Trigger on version tags like v0.1.0
+  workflow_dispatch:  # Allow manual trigger for testing
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install UV
+        run: |
+          pip install uv
+
+      - name: Install dependencies
+        run: |
+          uv sync
+
+      - name: Run tests
+        run: |
+          uv run pytest tests/ -v --ignore=tests/gui -x
+
+      - name: Build stable EXE
+        run: |
+          .\build.bat stable
+
+      - name: Install Inno Setup
+        run: |
+          choco install innosetup -y
+
+      - name: Extract version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $REF = "${{ github.ref_name }}"
+          if ($REF -match '^v(.+)$') {
+            $VERSION = $matches[1]
+          } else {
+            Write-Warning "Not a version tag, using 0.0.0-dev for manual workflow testing"
+            $VERSION = "0.0.0-dev"
+          }
+          echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
+
+      - name: Validate version consistency
+        shell: pwsh
+        run: |
+          $TAG_VERSION = "${{ steps.version.outputs.VERSION }}"
+
+          # Skip validation for manual workflow dispatch (dev builds)
+          if ($TAG_VERSION -eq "0.0.0-dev") {
+            Write-Host "Skipping version validation for dev build"
+            exit 0
+          }
+
+          # Extract versions from source files
+          $PY_VERSION = (Select-String -Path "localwispr/__init__.py" -Pattern '__version__ = "(.+)"').Matches.Groups[1].Value
+          $TOML_VERSION = (Select-String -Path "pyproject.toml" -Pattern 'version = "(.+)"').Matches.Groups[1].Value
+          $ISS_VERSION = (Select-String -Path "installer/localwispr.iss" -Pattern '#define MyAppVersion "(.+)"').Matches.Groups[1].Value
+
+          Write-Host "Version comparison:"
+          Write-Host "  Git tag:       $TAG_VERSION"
+          Write-Host "  __init__.py:   $PY_VERSION"
+          Write-Host "  pyproject.toml: $TOML_VERSION"
+          Write-Host "  localwispr.iss: $ISS_VERSION"
+
+          # Check if all versions match
+          if ($TAG_VERSION -ne $PY_VERSION -or $TAG_VERSION -ne $TOML_VERSION -or $TAG_VERSION -ne $ISS_VERSION) {
+            Write-Error "Version mismatch detected! All version numbers must match before release."
+            Write-Error "Please update all three files to version $TAG_VERSION and try again."
+            exit 1
+          }
+
+          Write-Host "✓ All versions match: $TAG_VERSION"
+
+      - name: Build installer
+        run: |
+          .\build-installer.bat
+
+      - name: Verify installer was created
+        shell: pwsh
+        run: |
+          $VERSION = "${{ steps.version.outputs.VERSION }}"
+          $INSTALLER = "dist\LocalWispr-Setup-$VERSION.exe"
+          if (!(Test-Path $INSTALLER)) {
+            Write-Error "Installer not found at $INSTALLER"
+            Write-Error "Build may have failed silently. Check build-installer.bat output above."
+            exit 1
+          }
+          $SIZE = (Get-Item $INSTALLER).Length / 1MB
+          Write-Host "✓ Installer created: $INSTALLER ($([math]::Round($SIZE, 2)) MB)"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/LocalWispr-Setup-${{ steps.version.outputs.VERSION }}.exe
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            Download `LocalWispr-Setup-${{ steps.version.outputs.VERSION }}.exe` and run it.
+
+            See [INSTALLATION.md](https://github.com/jofu-tofu/LocalWispr/blob/master/INSTALLATION.md) for detailed instructions.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: localwispr-installer-${{ steps.version.outputs.VERSION }}
+          path: dist/LocalWispr-Setup-*.exe
+          retention-days: 30
