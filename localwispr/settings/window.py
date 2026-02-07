@@ -17,16 +17,19 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import TYPE_CHECKING, Any, Callable
 
+from localwispr.settings.window_models import ModelManagerMixin
+from localwispr.settings.window_tabs import TabsMixin
+
 if TYPE_CHECKING:
-    from localwispr.settings_model import SettingsSnapshot, ValidationResult
+    from localwispr.settings.model import SettingsSnapshot, ValidationResult
 
 logger = logging.getLogger(__name__)
 
 
 # Model options
 MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
-DEVICES = ["cuda", "cpu"]
-COMPUTE_TYPES = ["float16", "int8", "float32"]
+DEVICES = ["auto", "cuda", "cpu"]
+COMPUTE_TYPES = ["auto", "float16", "int8", "float32"]
 
 # Language options (most common, with auto-detect)
 LANGUAGES = [
@@ -45,7 +48,7 @@ LANGUAGES = [
 ]
 
 
-class TkinterSettingsView:
+class TkinterSettingsView(TabsMixin, ModelManagerMixin):
     """Tkinter implementation of SettingsViewProtocol.
 
     Provides a tabbed interface for configuring:
@@ -60,7 +63,7 @@ class TkinterSettingsView:
 
     # Window dimensions
     WINDOW_WIDTH = 450
-    WINDOW_HEIGHT = 580
+    WINDOW_HEIGHT = 650
 
     # Base window title
     WINDOW_TITLE = "LocalWispr Settings"
@@ -87,6 +90,14 @@ class TkinterSettingsView:
         # Vocabulary listbox reference
         self._vocab_listbox: tk.Listbox | None = None
         self._vocab_entry: ttk.Entry | None = None
+
+        # Model Manager UI components
+        self._model_tree: ttk.Treeview | None = None
+        self._download_progress: ttk.Progressbar | None = None
+        self._progress_text: ttk.Label | None = None
+        self._cpu_recommendation: ttk.Label | None = None
+        self._is_downloading = False
+        self._downloading_model: str | None = None
 
     def populate(self, settings: "SettingsSnapshot") -> None:
         """Populate the view with settings values.
@@ -123,6 +134,10 @@ class TkinterSettingsView:
         if hasattr(self, "_hotkey_label"):
             self._hotkey_label.config(text=f"Current: {hotkey_str}")
 
+        # Update model manager display
+        self._refresh_model_tree()
+        self._update_cpu_recommendation()
+
         logger.debug("settings_view: populated with %s settings", len(self._vars))
 
     def collect(self) -> "SettingsSnapshot":
@@ -131,7 +146,7 @@ class TkinterSettingsView:
         Returns:
             SettingsSnapshot reflecting current UI values.
         """
-        from localwispr.settings_model import SettingsSnapshot
+        from localwispr.settings.model import SettingsSnapshot
 
         # Get vocabulary words from listbox
         vocab_words: tuple[str, ...] = ()
@@ -438,361 +453,6 @@ class TkinterSettingsView:
 
         return inner
 
-    def _create_general_tab(self, notebook: ttk.Notebook) -> None:
-        """Create the General settings tab.
-
-        Args:
-            notebook: Parent notebook widget.
-        """
-        tab = self._create_scrollable_tab(notebook, "General")
-
-        # Recording Mode section
-        mode_frame = ttk.LabelFrame(tab, text="Recording Mode", padding="10")
-        mode_frame.pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Radiobutton(
-            mode_frame,
-            text="Push-to-Talk (hold to record)",
-            variable=self._vars["mode"],
-            value="push-to-talk",
-        ).pack(anchor=tk.W)
-
-        ttk.Radiobutton(
-            mode_frame,
-            text="Toggle (press to start/stop)",
-            variable=self._vars["mode"],
-            value="toggle",
-        ).pack(anchor=tk.W)
-
-        # Hotkey display (read-only for now)
-        hotkey_frame = ttk.LabelFrame(tab, text="Hotkey", padding="10")
-        hotkey_frame.pack(fill=tk.X, pady=(0, 10))
-
-        self._hotkey_label = ttk.Label(
-            hotkey_frame,
-            text="Current: (loading...)",
-            font=("TkDefaultFont", 10, "bold"),
-        )
-        self._hotkey_label.pack(anchor=tk.W)
-
-        ttk.Label(
-            hotkey_frame,
-            text="(Edit config.toml to change hotkey)",
-            foreground="gray",
-        ).pack(anchor=tk.W)
-
-        # Audio Feedback section
-        audio_frame = ttk.LabelFrame(tab, text="Audio", padding="10")
-        audio_frame.pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Checkbutton(
-            audio_frame,
-            text="Play sounds when recording starts/stops",
-            variable=self._vars["audio_feedback"],
-            onvalue=True,
-            offvalue=False,
-        ).pack(anchor=tk.W)
-
-        ttk.Checkbutton(
-            audio_frame,
-            text="Mute system audio during recording",
-            variable=self._vars["mute_system"],
-            onvalue=True,
-            offvalue=False,
-        ).pack(anchor=tk.W, pady=(5, 0))
-
-        # Output section
-        output_frame = ttk.LabelFrame(tab, text="Output", padding="10")
-        output_frame.pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Checkbutton(
-            output_frame,
-            text="Auto-paste after transcription",
-            variable=self._vars["auto_paste"],
-            onvalue=True,
-            offvalue=False,
-        ).pack(anchor=tk.W)
-
-        # Paste delay
-        delay_frame = ttk.Frame(output_frame)
-        delay_frame.pack(fill=tk.X, pady=(5, 0))
-
-        ttk.Label(delay_frame, text="Paste delay:").pack(side=tk.LEFT)
-
-        delay_spinbox = ttk.Spinbox(
-            delay_frame,
-            from_=0,
-            to=500,
-            increment=10,
-            width=6,
-            textvariable=self._vars["paste_delay_ms"],
-        )
-        delay_spinbox.pack(side=tk.LEFT, padx=(5, 0))
-
-        ttk.Label(delay_frame, text="ms").pack(side=tk.LEFT, padx=(2, 0))
-
-        # Advanced section (Streaming)
-        advanced_frame = ttk.LabelFrame(tab, text="Advanced", padding="10")
-        advanced_frame.pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Checkbutton(
-            advanced_frame,
-            text="Enable streaming transcription",
-            variable=self._vars["streaming_enabled"],
-            onvalue=True,
-            offvalue=False,
-        ).pack(anchor=tk.W)
-
-        ttk.Label(
-            advanced_frame,
-            text="Processes audio in chunks during recording. "
-            "Faster for long recordings (2+ minutes).",
-            foreground="gray",
-            justify=tk.LEFT,
-            wraplength=380,
-        ).pack(anchor=tk.W, pady=(2, 0))
-
-    def _create_model_tab(self, notebook: ttk.Notebook) -> None:
-        """Create the Model settings tab.
-
-        Args:
-            notebook: Parent notebook widget.
-        """
-        tab = self._create_scrollable_tab(notebook, "Model")
-
-        # Model selection
-        model_frame = ttk.LabelFrame(tab, text="Whisper Model", padding="10")
-        model_frame.pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Label(model_frame, text="Model size:").pack(anchor=tk.W)
-
-        model_combo = ttk.Combobox(
-            model_frame,
-            textvariable=self._vars["model_name"],
-            values=MODEL_SIZES,
-            state="readonly",
-            width=20,
-        )
-        model_combo.pack(anchor=tk.W, pady=(2, 5))
-
-        # Model size descriptions
-        size_info = ttk.Label(
-            model_frame,
-            text="tiny: Fastest, lowest accuracy\n"
-            "base/small: Good balance\n"
-            "medium: Better accuracy\n"
-            "large-v3: Best accuracy (recommended)",
-            foreground="gray",
-            justify=tk.LEFT,
-            wraplength=380,
-        )
-        size_info.pack(anchor=tk.W)
-
-        # Device selection
-        device_frame = ttk.LabelFrame(tab, text="Device", padding="10")
-        device_frame.pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Label(device_frame, text="Processing device:").pack(anchor=tk.W)
-
-        device_combo = ttk.Combobox(
-            device_frame,
-            textvariable=self._vars["device"],
-            values=DEVICES,
-            state="readonly",
-            width=20,
-        )
-        device_combo.pack(anchor=tk.W, pady=(2, 5))
-
-        ttk.Label(
-            device_frame,
-            text="cuda: GPU (faster, requires NVIDIA GPU)\n"
-            "cpu: CPU (slower, works everywhere)",
-            foreground="gray",
-            justify=tk.LEFT,
-            wraplength=380,
-        ).pack(anchor=tk.W)
-
-        # Compute type selection
-        compute_frame = ttk.LabelFrame(tab, text="Compute Type", padding="10")
-        compute_frame.pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Label(compute_frame, text="Precision:").pack(anchor=tk.W)
-
-        compute_combo = ttk.Combobox(
-            compute_frame,
-            textvariable=self._vars["compute_type"],
-            values=COMPUTE_TYPES,
-            state="readonly",
-            width=20,
-        )
-        compute_combo.pack(anchor=tk.W, pady=(2, 5))
-
-        ttk.Label(
-            compute_frame,
-            text="float16: Best for GPU (fast)\n"
-            "int8: Best for CPU (smaller memory)\n"
-            "float32: Maximum precision (slow)",
-            foreground="gray",
-            justify=tk.LEFT,
-            wraplength=380,
-        ).pack(anchor=tk.W)
-
-        # Language selection
-        lang_frame = ttk.LabelFrame(tab, text="Language", padding="10")
-        lang_frame.pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Label(lang_frame, text="Transcription language:").pack(anchor=tk.W)
-
-        lang_combo = ttk.Combobox(
-            lang_frame,
-            textvariable=self._vars["language"],
-            values=[code for _, code in LANGUAGES],
-            state="readonly",
-            width=20,
-        )
-        lang_combo.pack(anchor=tk.W, pady=(2, 5))
-
-        # Show language name mapping
-        lang_names = ", ".join(f"{code}={name}" for name, code in LANGUAGES[:6])
-        ttk.Label(
-            lang_frame,
-            text=f"Codes: {lang_names}...",
-            foreground="gray",
-            wraplength=380,
-        ).pack(anchor=tk.W)
-
-    def _create_vocabulary_tab(self, notebook: ttk.Notebook) -> None:
-        """Create the Vocabulary settings tab.
-
-        Args:
-            notebook: Parent notebook widget.
-        """
-        tab = ttk.Frame(notebook, padding="10")
-        notebook.add(tab, text="Vocabulary")
-
-        # Description
-        ttk.Label(
-            tab,
-            text="Add custom words to improve transcription accuracy.\n"
-            "Useful for technical terms, names, and acronyms.",
-            justify=tk.LEFT,
-        ).pack(anchor=tk.W, pady=(0, 10))
-
-        # Vocabulary list frame
-        list_frame = ttk.Frame(tab)
-        list_frame.pack(fill=tk.BOTH, expand=True)
-
-        # Listbox with scrollbar
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self._vocab_listbox = tk.Listbox(
-            list_frame,
-            yscrollcommand=scrollbar.set,
-            height=12,
-            selectmode=tk.EXTENDED,
-        )
-        self._vocab_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self._vocab_listbox.yview)
-
-        # Add word frame
-        add_frame = ttk.Frame(tab)
-        add_frame.pack(fill=tk.X, pady=(10, 0))
-
-        self._vocab_entry = ttk.Entry(add_frame)
-        self._vocab_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self._vocab_entry.bind("<Return>", lambda e: self._add_vocab_word())
-
-        ttk.Button(
-            add_frame,
-            text="Add",
-            command=self._add_vocab_word,
-            width=8,
-        ).pack(side=tk.LEFT, padx=(5, 0))
-
-        # Remove button
-        ttk.Button(
-            tab,
-            text="Remove Selected",
-            command=self._remove_vocab_words,
-        ).pack(anchor=tk.E, pady=(5, 0))
-
-    def _validate_vocab_word(self, word: str) -> tuple[bool, str]:
-        """Validate a vocabulary word for TOML safety.
-
-        Args:
-            word: The word to validate.
-
-        Returns:
-            Tuple of (is_valid, cleaned_word_or_error_message).
-        """
-        word = word.strip()
-
-        if not word:
-            return False, "Word cannot be empty"
-
-        if len(word) > 100:
-            return False, "Word too long (max 100 characters)"
-
-        # TOML-unsafe characters that would corrupt config
-        unsafe_chars = {
-            '"': 'double quote',
-            '\\': 'backslash',
-            '\n': 'newline',
-            '\r': 'carriage return',
-            '\t': 'tab',
-        }
-        for char, name in unsafe_chars.items():
-            if char in word:
-                return False, f"Word contains invalid character: {name}"
-
-        return True, word
-
-    def _add_vocab_word(self) -> None:
-        """Add a word to the vocabulary list."""
-        if self._vocab_entry is None or self._vocab_listbox is None:
-            return
-
-        word = self._vocab_entry.get()
-
-        # Validate the word
-        is_valid, result = self._validate_vocab_word(word)
-        if not is_valid:
-            if result != "Word cannot be empty":  # Don't show error for empty input
-                messagebox.showwarning("Invalid Word", result)
-            return
-
-        word = result  # Use cleaned word
-
-        # Check for duplicates
-        existing = list(self._vocab_listbox.get(0, tk.END))
-        if word in existing:
-            messagebox.showinfo("Duplicate", f"'{word}' is already in the vocabulary list.")
-            self._vocab_entry.delete(0, tk.END)
-            return
-
-        self._vocab_listbox.insert(tk.END, word)
-        self._vocab_entry.delete(0, tk.END)
-
-        # Notify controller of change
-        if self.on_setting_changed is not None:
-            self.on_setting_changed("vocabulary_words", None)
-
-    def _remove_vocab_words(self) -> None:
-        """Remove selected words from the vocabulary list."""
-        if self._vocab_listbox is None:
-            return
-
-        # Get selected indices in reverse order to avoid index shifting
-        selected = list(self._vocab_listbox.curselection())
-        if selected:
-            for index in reversed(selected):
-                self._vocab_listbox.delete(index)
-
-            # Notify controller of change
-            if self.on_setting_changed is not None:
-                self.on_setting_changed("vocabulary_words", None)
-
 
 # Convenience alias for backward compatibility
 SettingsWindow = TkinterSettingsView
@@ -807,7 +467,7 @@ def open_settings(on_settings_changed: Callable[[], None] | None = None) -> None
         on_settings_changed: Optional callback invoked after settings are saved.
                              Used to notify the app to apply changes.
     """
-    from localwispr.settings_controller import SettingsController
+    from localwispr.settings.controller import SettingsController
 
     view = TkinterSettingsView()
     controller = SettingsController(view, on_settings_applied=on_settings_changed)

@@ -34,14 +34,16 @@ class TestRecordingWorkflow:
             return_value=mock_recorder,
         )
 
-        # Mock Whisper model
+        # Mock pywhispercpp Model
         mock_model = MagicMock()
         segments = [MockSegment(text=" This is a test transcription.")]
-        mock_model.transcribe.return_value = (iter(segments), None)
+        mock_model.transcribe.return_value = segments
         mocker.patch(
-            "faster_whisper.WhisperModel",
+            "pywhispercpp.model.Model",
             return_value=mock_model,
         )
+        mocker.patch("localwispr.transcribe.model_manager.is_model_downloaded", return_value=True)
+        mocker.patch("localwispr.transcribe.model_manager.get_model_path", return_value="/fake/path/model.bin")
 
         # Mock output (unused but prevents real clipboard operations)
         mocker.patch(
@@ -102,7 +104,7 @@ class TestRecordingWorkflow:
         mock_transcriber.transcribe.side_effect = track_prompt
 
         mocker.patch(
-            "localwispr.transcribe.WhisperTranscriber",
+            "localwispr.transcribe.transcriber.WhisperTranscriber",
             return_value=mock_transcriber,
         )
 
@@ -140,7 +142,7 @@ class TestContextDetectionWorkflow:
         """Test that coding keywords trigger context detection."""
         mocker.patch("localwispr.config.get_config", return_value=mock_config)
 
-        from localwispr.context import ContextDetector, ContextType
+        from localwispr.transcribe.context import ContextDetector, ContextType
 
         detector = ContextDetector()
 
@@ -153,7 +155,7 @@ class TestContextDetectionWorkflow:
         """Test that planning keywords trigger context detection."""
         mocker.patch("localwispr.config.get_config", return_value=mock_config)
 
-        from localwispr.context import ContextDetector, ContextType
+        from localwispr.transcribe.context import ContextDetector, ContextType
 
         detector = ContextDetector()
 
@@ -176,18 +178,18 @@ class TestContextDetectionWorkflow:
         )
 
         # Mock detector
-        from localwispr.context import ContextType
+        from localwispr.transcribe.context import ContextType
 
         mock_detector = MagicMock()
         mock_detector.detect_from_window.return_value = ContextType.GENERAL
         mock_detector.detect_from_text.return_value = ContextType.CODING
 
         # Mock load_prompt
-        mocker.patch("localwispr.transcribe.load_prompt", return_value="coding prompt")
+        mocker.patch("localwispr.transcribe.transcriber.load_prompt", return_value="coding prompt")
 
         audio = np.zeros(16000, dtype=np.float32)
 
-        from localwispr.transcribe import transcribe_with_context
+        from localwispr.transcribe.transcriber import transcribe_with_context
 
         result = transcribe_with_context(audio, mock_transcriber, mock_detector)
 
@@ -350,7 +352,7 @@ class TestErrorHandlingWorkflow:
         mock_transcriber.model = MagicMock()
         mock_transcriber.transcribe.side_effect = Exception("Transcription failed")
         mocker.patch(
-            "localwispr.transcribe.WhisperTranscriber",
+            "localwispr.transcribe.transcriber.WhisperTranscriber",
             return_value=mock_transcriber,
         )
 

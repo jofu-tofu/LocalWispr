@@ -66,7 +66,7 @@ class TestRecordingPipeline:
         mock_transcriber = MagicMock()
         mock_transcriber.model = MagicMock()
         mock_transcriber_class = mocker.patch(
-            "localwispr.transcribe.WhisperTranscriber",
+            "localwispr.transcribe.transcriber.WhisperTranscriber",
             return_value=mock_transcriber,
         )
 
@@ -220,7 +220,7 @@ class TestRecordingPipeline:
             return mock
 
         mocker.patch(
-            "localwispr.transcribe.WhisperTranscriber",
+            "localwispr.transcribe.transcriber.WhisperTranscriber",
             side_effect=mock_transcriber_init,
         )
 
@@ -359,7 +359,7 @@ class TestRecordingPipeline:
         )
 
         mock_mute = mocker.patch(
-            "localwispr.volume.mute_system",
+            "localwispr.audio.volume.mute_system",
             return_value=True,
         )
 
@@ -401,7 +401,7 @@ class TestAsyncTranscription:
         mock_transcriber.model = MagicMock()
         mock_transcriber.transcribe.return_value = mock_result
         mocker.patch(
-            "localwispr.transcribe.WhisperTranscriber",
+            "localwispr.transcribe.transcriber.WhisperTranscriber",
             return_value=mock_transcriber,
         )
 
@@ -612,7 +612,7 @@ class TestAsyncTranscription:
         mock_transcriber.model = MagicMock()
         mock_transcriber.transcribe.return_value = mock_result
         mocker.patch(
-            "localwispr.transcribe.WhisperTranscriber",
+            "localwispr.transcribe.transcriber.WhisperTranscriber",
             return_value=mock_transcriber,
         )
         mocker.patch(
@@ -659,8 +659,8 @@ class TestAsyncTranscription:
         )
 
         # Mock mute functions
-        mock_mute = mocker.patch("localwispr.volume.mute_system", return_value=True)
-        mock_restore = mocker.patch("localwispr.volume.restore_mute_state")
+        mock_mute = mocker.patch("localwispr.audio.volume.mute_system", return_value=True)
+        mock_restore = mocker.patch("localwispr.audio.volume.restore_mute_state")
 
         from localwispr.modes import ModeManager
         from localwispr.pipeline import RecordingPipeline
@@ -724,7 +724,7 @@ class TestCriticalEdgeCases:
 
         # Mock model as already downloaded (required for preload to proceed)
         mocker.patch(
-            "localwispr.model_manager.is_model_downloaded",
+            "localwispr.transcribe.model_manager.is_model_downloaded",
             return_value=True,
         )
 
@@ -740,7 +740,7 @@ class TestCriticalEdgeCases:
             return mock_transcriber
 
         mocker.patch(
-            "localwispr.transcribe.WhisperTranscriber",
+            "localwispr.transcribe.transcriber.WhisperTranscriber",
             side_effect=slow_model_init,
         )
 
@@ -790,7 +790,7 @@ class TestCriticalEdgeCases:
         mock_transcriber.model = MagicMock()
         mock_transcriber.transcribe.return_value = mock_result
         mocker.patch(
-            "localwispr.transcribe.WhisperTranscriber",
+            "localwispr.transcribe.transcriber.WhisperTranscriber",
             return_value=mock_transcriber,
         )
         mocker.patch(
@@ -974,7 +974,7 @@ class TestStreamingMode:
         mocker.patch("localwispr.config.get_config", return_value=mock_config)
 
         # Mock transcriber loading to fail
-        mocker.patch("localwispr.transcribe.WhisperTranscriber", side_effect=Exception("Model loading failed"))
+        mocker.patch("localwispr.transcribe.transcriber.WhisperTranscriber", side_effect=Exception("Model loading failed"))
 
         # Mock recorder
         mock_recorder = MagicMock()
@@ -1063,7 +1063,7 @@ class TestStreamingMode:
         # Mock batch transcriber (should NOT be called)
         mock_transcriber = MagicMock()
         mocker.patch(
-            "localwispr.transcribe.WhisperTranscriber",
+            "localwispr.transcribe.transcriber.WhisperTranscriber",
             return_value=mock_transcriber,
         )
 

@@ -54,6 +54,7 @@ Build to Stable only when the user explicitly requests it with phrases like:
 | `build.bat test` | Test version | After any code change |
 | `build.bat stable` | Stable version | Only when user explicitly requests |
 | `build.bat both` | Both versions | Only when user explicitly requests |
+| `build.bat installer` | Stable + Windows installer | For release builds |
 | `build.bat` | Stable (default) | Avoid - defaults to stable |
 
 **Important:** Always use `build.bat`, never run PyInstaller directly. The batch file:
@@ -153,7 +154,7 @@ mocker.patch("localwispr.transcribe.WhisperModel")
 | Dependency | Purpose |
 |------------|---------|
 | `sounddevice` | Audio recording |
-| `faster_whisper` | Whisper model |
+| `pywhispercpp.model.Model` | Whisper model (pywhispercpp) |
 | `pyperclip` | Clipboard operations |
 | `pynput` | Keyboard/hotkey input |
 
@@ -165,15 +166,37 @@ mocker.patch("localwispr.transcribe.WhisperModel")
 
 ---
 
+## Package Structure
+
+| Package | Purpose |
+|---------|---------|
+| `localwispr/config/` | Config loading, saving, caching, migration, types |
+| `localwispr/settings/` | Settings MVC: model, view, controller, manager, window |
+| `localwispr/audio/` | Audio recording, feedback sounds, volume control, format conversion |
+| `localwispr/transcribe/` | Whisper transcription, streaming, context detection, GPU, model management |
+| `localwispr/ui/` | Tray icon, overlay widget, notifications, first-run wizard |
+| `localwispr/modes/` | Transcription mode definitions and management |
+| `localwispr/prompts/` | Prompt text files for each transcription mode |
+
+Root-level modules: `__init__.py`, `__main__.py`, `pipeline.py`, `hotkeys.py`, `output.py`, `cli_tests.py`
+
+### Mocking Pattern for Subpackages
+
+Mock patches must target the **usage location** (where the import is consumed):
+- For **lazy imports** (inside functions): patch at the source submodule, e.g., `"localwispr.transcribe.model_manager.is_model_downloaded"`
+- For **top-level imports**: patch where it's bound, e.g., `"localwispr.transcribe.transcriber.get_config"`
+- For **__init__.py re-exports** used by consumers: patch at the package level, e.g., `"localwispr.audio.AudioRecorder"`
+
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `localwispr/*.py` | Source code |
 | `localwispr.spec` | PyInstaller build config (parameterized) |
 | `config.toml` | Stable version config |
 | `config-test.toml` | Test version config |
-| `build.bat` | Build script with stable/test/both options |
+| `build.bat` | Build script with stable/test/both/installer options |
+| `build-installer.bat` | Standalone installer build script |
+| `installer/localwispr.iss` | Inno Setup script for Windows installer |
 
 ---
 

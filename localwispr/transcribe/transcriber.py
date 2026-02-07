@@ -1,20 +1,32 @@
-"""Whisper transcription module for LocalWispr."""
+"""Whisper transcription module for LocalWispr.
+
+Uses pywhispercpp (whisper.cpp Python bindings) for fast, lightweight transcription.
+"""
 
 from __future__ import annotations
 
+import logging
+import os
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
+from scipy.io import wavfile
 
 from localwispr.config import get_config
-from localwispr.context import ContextDetector, ContextType
+from localwispr.transcribe.context import ContextDetector, ContextType
 from localwispr.prompts import load_prompt
 
 if TYPE_CHECKING:
-    from faster_whisper import WhisperModel
+    from pywhispercpp.model import Model as WhisperModel
     from localwispr.audio import AudioRecorder
+
+logger = logging.getLogger(__name__)
+
+# Whisper expects 16kHz audio
+WHISPER_SAMPLE_RATE = 16000
 
 
 @dataclass
@@ -43,8 +55,8 @@ class TranscriptionResult:
 class WhisperTranscriber:
     """Whisper-based transcriber with lazy model loading.
 
-    Loads the faster-whisper model on first use to avoid startup delay.
-    Uses config settings for model name, device, and compute type.
+    Loads the pywhispercpp model on first use to avoid startup delay.
+    Uses config settings for model name and device.
     """
 
     def __init__(
@@ -60,7 +72,7 @@ class WhisperTranscriber:
                 If None, uses config setting.
             device: Device to run on ("cuda" or "cpu").
                 If None, uses config setting.
-            compute_type: Compute type for inference ("float16", "int8", etc.).
+            compute_type: Compute type for inference (kept for compatibility).
                 If None, uses config setting.
         """
         # Load config for defaults
@@ -68,10 +80,18 @@ class WhisperTranscriber:
         model_config = config["model"]
 
         self._model_name = model_name or model_config["name"]
-        self._device = device or model_config["device"]
-        self._compute_type = compute_type or model_config["compute_type"]
 
-        # Language setting (auto = None for faster-whisper)
+        # Get configured device/compute_type (may be "auto")
+        config_device = device or model_config["device"]
+        config_compute = compute_type or model_config["compute_type"]
+
+        # Resolve "auto" values to actual device/compute_type
+        from localwispr.transcribe.device import resolve_device, get_optimal_threads
+
+        self._device, self._compute_type = resolve_device(config_device, config_compute)
+        self._n_threads = get_optimal_threads()
+
+        # Language setting (auto = None for whisper.cpp)
         lang = model_config.get("language", "auto")
         self._language = None if lang == "auto" else lang
 
@@ -82,26 +102,48 @@ class WhisperTranscriber:
         # Lazy-loaded model
         self._model: WhisperModel | None = None
 
-    def _load_model(self) -> WhisperModel:
+        logger.info(
+            "transcriber: initialized model=%s device=%s threads=%d",
+            self._model_name,
+            self._device,
+            self._n_threads,
+        )
+
+    def _load_model(self) -> "WhisperModel":
         """Load the Whisper model.
 
         Returns:
-            Loaded WhisperModel instance.
+            Loaded pywhispercpp Model instance.
         """
-        from faster_whisper import WhisperModel
+        from pywhispercpp.model import Model
+        from localwispr.transcribe.model_manager import get_model_path, is_model_downloaded
 
-        return WhisperModel(
-            self._model_name,
-            device=self._device,
-            compute_type=self._compute_type,
+        # Check if model is downloaded
+        if not is_model_downloaded(self._model_name):
+            raise RuntimeError(
+                f"Model '{self._model_name}' is not downloaded. "
+                "Please download it first using the settings window."
+            )
+
+        model_path = get_model_path(self._model_name)
+        logger.info("transcriber: loading model from %s", model_path)
+
+        # Create model with appropriate settings
+        # pywhispercpp handles GPU automatically if compiled with CUDA support
+        model = Model(
+            model=str(model_path),
+            n_threads=self._n_threads,
         )
 
+        logger.info("transcriber: model loaded successfully")
+        return model
+
     @property
-    def model(self) -> WhisperModel:
+    def model(self) -> "WhisperModel":
         """Get the Whisper model, loading it if necessary.
 
         Returns:
-            The loaded WhisperModel instance.
+            The loaded pywhispercpp Model instance.
         """
         if self._model is None:
             self._model = self._load_model()
@@ -137,6 +179,25 @@ class WhisperTranscriber:
         """Check if the model is loaded."""
         return self._model is not None
 
+    def _audio_to_temp_wav(self, audio: np.ndarray) -> str:
+        """Write audio to a temporary WAV file for pywhispercpp.
+
+        Args:
+            audio: Audio data as float32 numpy array, mono, 16kHz.
+
+        Returns:
+            Path to the temporary WAV file.
+        """
+        # Create a temporary file that won't be auto-deleted
+        fd, temp_path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+
+        # Convert float32 [-1, 1] to int16 for WAV
+        audio_int16 = (audio * 32767).astype(np.int16)
+        wavfile.write(temp_path, WHISPER_SAMPLE_RATE, audio_int16)
+
+        return temp_path
+
     def transcribe(
         self,
         audio: np.ndarray,
@@ -152,58 +213,77 @@ class WhisperTranscriber:
                 Should be in range [-1, 1].
             beam_size: Beam size for decoding. Higher is more accurate but slower.
             vad_filter: If True, use voice activity detection to skip silence.
+                (Note: pywhispercpp has its own VAD handling)
             initial_prompt: Optional prompt to guide transcription with domain vocabulary.
 
         Returns:
             TranscriptionResult with text and timing information.
         """
         # Calculate audio duration (assuming 16kHz sample rate)
-        audio_duration = len(audio) / 16000.0
+        audio_duration = len(audio) / WHISPER_SAMPLE_RATE
 
-        # Run inference with timing
-        start_time = time.perf_counter()
+        # Write audio to temp file for pywhispercpp
+        temp_path = self._audio_to_temp_wav(audio)
 
-        # Build transcribe kwargs
-        transcribe_kwargs = {
-            "beam_size": beam_size,
-            "vad_filter": vad_filter,
-            "word_timestamps": False,
-            "initial_prompt": initial_prompt,
-        }
+        try:
+            # Run inference with timing
+            start_time = time.perf_counter()
 
-        # Add language if specified (None = auto-detect)
-        if self._language is not None:
-            transcribe_kwargs["language"] = self._language
+            # Build transcribe kwargs for pywhispercpp
+            transcribe_kwargs = {}
 
-        # Add hotwords if configured (for better recognition of custom vocabulary)
-        if self._hotwords:
-            transcribe_kwargs["hotwords"] = " ".join(self._hotwords)
+            # Add language if specified (None/empty = auto-detect)
+            if self._language:
+                transcribe_kwargs["language"] = self._language
 
-        segments_iter, info = self.model.transcribe(audio, **transcribe_kwargs)
+            # Add initial prompt if specified
+            if initial_prompt:
+                transcribe_kwargs["initial_prompt"] = initial_prompt
 
-        # Collect segments and build full text
-        segments = []
-        text_parts = []
+            # Add hotwords to initial prompt if configured
+            if self._hotwords and not initial_prompt:
+                transcribe_kwargs["initial_prompt"] = " ".join(self._hotwords)
+            elif self._hotwords and initial_prompt:
+                # Append hotwords to the existing prompt
+                transcribe_kwargs["initial_prompt"] = (
+                    initial_prompt + " " + " ".join(self._hotwords)
+                )
 
-        for segment in segments_iter:
-            segments.append({
-                "start": segment.start,
-                "end": segment.end,
-                "text": segment.text,
-            })
-            text_parts.append(segment.text)
+            # Transcribe using pywhispercpp
+            segments = self.model.transcribe(temp_path, **transcribe_kwargs)
 
-        inference_time = time.perf_counter() - start_time
+            inference_time = time.perf_counter() - start_time
 
-        # Join text parts
-        text = "".join(text_parts).strip()
+            # Collect segments and build full text
+            segment_list = []
+            text_parts = []
 
-        return TranscriptionResult(
-            text=text,
-            segments=segments,
-            inference_time=inference_time,
-            audio_duration=audio_duration,
-        )
+            for segment in segments:
+                # pywhispercpp Segment has: t0, t1, text
+                # t0 and t1 are in centiseconds (1/100th of a second)
+                segment_list.append({
+                    "start": segment.t0 / 100.0,
+                    "end": segment.t1 / 100.0,
+                    "text": segment.text,
+                })
+                text_parts.append(segment.text)
+
+            # Join text parts
+            text = "".join(text_parts).strip()
+
+            return TranscriptionResult(
+                text=text,
+                segments=segment_list,
+                inference_time=inference_time,
+                audio_duration=audio_duration,
+            )
+
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 
 def transcribe_with_context(
@@ -268,7 +348,7 @@ def transcribe_with_context(
 
 
 def transcribe_recording(
-    recorder: AudioRecorder,
+    recorder: "AudioRecorder",
     transcriber: WhisperTranscriber | None = None,
     *,
     use_context: bool = True,

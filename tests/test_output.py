@@ -149,7 +149,7 @@ class TestOutputTranscription:
 
     def test_output_transcription_plays_feedback(self, mock_pyperclip, mocker):
         """Test that audio feedback is played when enabled."""
-        mock_feedback = mocker.patch("localwispr.feedback.play_stop_beep")
+        mock_feedback = mocker.patch("localwispr.audio.feedback.play_stop_beep")
         mocker.patch("localwispr.output.paste_to_active_window", return_value=True)
 
         from localwispr.output import output_transcription
@@ -199,7 +199,7 @@ class TestOutputTranscription:
     ):
         """Test that feedback failure doesn't stop output."""
         mocker.patch(
-            "localwispr.feedback.play_stop_beep",
+            "localwispr.audio.feedback.play_stop_beep",
             side_effect=Exception("audio error"),
         )
         mocker.patch("localwispr.output.paste_to_active_window", return_value=True)

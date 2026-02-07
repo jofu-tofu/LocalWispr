@@ -11,7 +11,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 
-from localwispr.settings_manager import (
+from localwispr.settings.manager import (
     InvalidationFlags,
     SettingsManager,
     SETTINGS_INVALIDATION,

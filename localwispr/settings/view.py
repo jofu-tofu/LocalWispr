@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 if TYPE_CHECKING:
-    from localwispr.settings_model import SettingsSnapshot, ValidationResult
+    from localwispr.settings.model import SettingsSnapshot, ValidationResult
 
 
 class SettingsViewProtocol(Protocol):

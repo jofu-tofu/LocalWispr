@@ -5,7 +5,7 @@ description = "Local speech-to-text using Whisper - privacy-first, no cloud APIs
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "faster-whisper>=1.2.1",
+    "pywhispercpp>=1.4.0",
     "pillow>=12.1.0",
     "pygetwindow>=0.0.9",
     "pynput>=1.8.1",

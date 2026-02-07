@@ -208,8 +208,8 @@ class ValidationResult:
 
 # Valid model options
 VALID_MODEL_NAMES = {"tiny", "base", "small", "medium", "large-v2", "large-v3"}
-VALID_DEVICES = {"cuda", "cpu"}
-VALID_COMPUTE_TYPES = {"float16", "int8", "float32"}
+VALID_DEVICES = {"auto", "cuda", "cpu"}
+VALID_COMPUTE_TYPES = {"auto", "float16", "int8", "float32"}
 VALID_LANGUAGES = {
     "auto", "en", "es", "fr", "de", "it", "pt", "nl", "ru", "zh", "ja", "ko"
 }

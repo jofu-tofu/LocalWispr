@@ -24,10 +24,10 @@ import numpy as np
 
 if TYPE_CHECKING:
     from localwispr.audio import AudioRecorder
-    from localwispr.context import ContextDetector
+    from localwispr.transcribe.context import ContextDetector
     from localwispr.modes import ModeManager
-    from localwispr.streaming import StreamingTranscriber
-    from localwispr.transcribe import TranscriptionResult, WhisperTranscriber
+    from localwispr.transcribe.streaming import StreamingTranscriber
+    from localwispr.transcribe.transcriber import TranscriptionResult, WhisperTranscriber
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +173,7 @@ class RecordingPipeline:
         """
         try:
             from localwispr.config import get_config
-            from localwispr.model_manager import is_model_downloaded
+            from localwispr.transcribe.model_manager import is_model_downloaded
 
             config = get_config()
             model_name = config["model"]["name"]
@@ -190,7 +190,7 @@ class RecordingPipeline:
                 )
                 return
 
-            from localwispr.transcribe import WhisperTranscriber
+            from localwispr.transcribe.transcriber import WhisperTranscriber
 
             logger.info("model_preload: starting for %s", model_name)
             transcriber = WhisperTranscriber()
@@ -223,7 +223,7 @@ class RecordingPipeline:
         try:
             # Mute system audio if enabled
             if mute_system:
-                from localwispr.volume import mute_system as do_mute
+                from localwispr.audio.volume import mute_system as do_mute
 
                 self._was_muted_before_recording = do_mute()
                 logger.debug("recording: system muted (was_muted=%s)", self._was_muted_before_recording)
@@ -290,7 +290,7 @@ class RecordingPipeline:
             self._streaming_enabled = False
             return
 
-        from localwispr.streaming import StreamingTranscriber, get_streaming_config
+        from localwispr.transcribe.streaming import StreamingTranscriber, get_streaming_config
 
         config = get_streaming_config()
         self._streaming_transcriber = StreamingTranscriber(
@@ -411,7 +411,7 @@ class RecordingPipeline:
 
     def _restore_system_audio(self) -> None:
         """Restore system audio mute state after recording."""
-        from localwispr.volume import restore_mute_state
+        from localwispr.audio.volume import restore_mute_state
 
         restore_mute_state(self._was_muted_before_recording)
         logger.debug("recording: system mute restored to %s", self._was_muted_before_recording)
@@ -456,7 +456,7 @@ class RecordingPipeline:
         Returns:
             WhisperTranscriber instance or None on error.
         """
-        from localwispr.transcribe import WhisperTranscriber
+        from localwispr.transcribe.transcriber import WhisperTranscriber
 
         with self._transcriber_lock:
             # Check if preload failed due to model not downloaded
@@ -478,7 +478,7 @@ class RecordingPipeline:
                 try:
                     # Check if model is downloaded before sync fallback
                     from localwispr.config import get_config
-                    from localwispr.model_manager import is_model_downloaded
+                    from localwispr.transcribe.model_manager import is_model_downloaded
 
                     config = get_config()
                     model_name = config["model"]["name"]
@@ -535,11 +535,11 @@ class RecordingPipeline:
         else:
             # Use context detection for automatic mode selection
             if self._detector is None:
-                from localwispr.context import ContextDetector
+                from localwispr.transcribe.context import ContextDetector
 
                 self._detector = ContextDetector()
 
-            from localwispr.transcribe import transcribe_with_context
+            from localwispr.transcribe.transcriber import transcribe_with_context
 
             result = transcribe_with_context(audio, transcriber, self._detector)
 

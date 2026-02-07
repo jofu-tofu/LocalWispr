@@ -13,11 +13,11 @@ class TestShowNotification:
         """Test that show_notification returns True on success."""
         mock_notification = MagicMock()
         mocker.patch(
-            "localwispr.notifications.Notification",
+            "localwispr.ui.notifications.Notification",
             return_value=mock_notification,
         )
 
-        from localwispr.notifications import show_notification
+        from localwispr.ui.notifications import show_notification
 
         result = show_notification("Title", "Message")
 
@@ -27,11 +27,11 @@ class TestShowNotification:
     def test_show_notification_returns_false_on_error(self, mocker):
         """Test that show_notification returns False on exception."""
         mocker.patch(
-            "localwispr.notifications.Notification",
+            "localwispr.ui.notifications.Notification",
             side_effect=Exception("Notification failed"),
         )
 
-        from localwispr.notifications import show_notification
+        from localwispr.ui.notifications import show_notification
 
         result = show_notification("Title", "Message")
 
@@ -41,11 +41,11 @@ class TestShowNotification:
         """Test that timeout <= 5 uses 'short' duration."""
         mock_notification = MagicMock()
         mock_notification_class = mocker.patch(
-            "localwispr.notifications.Notification",
+            "localwispr.ui.notifications.Notification",
             return_value=mock_notification,
         )
 
-        from localwispr.notifications import show_notification
+        from localwispr.ui.notifications import show_notification
 
         show_notification("Title", "Message", timeout=5)
 
@@ -57,11 +57,11 @@ class TestShowNotification:
         """Test that timeout > 5 uses 'long' duration."""
         mock_notification = MagicMock()
         mock_notification_class = mocker.patch(
-            "localwispr.notifications.Notification",
+            "localwispr.ui.notifications.Notification",
             return_value=mock_notification,
         )
 
-        from localwispr.notifications import show_notification
+        from localwispr.ui.notifications import show_notification
 
         show_notification("Title", "Message", timeout=10)
 
@@ -73,11 +73,11 @@ class TestShowNotification:
         """Test that notification has audio set."""
         mock_notification = MagicMock()
         mocker.patch(
-            "localwispr.notifications.Notification",
+            "localwispr.ui.notifications.Notification",
             return_value=mock_notification,
         )
 
-        from localwispr.notifications import show_notification
+        from localwispr.ui.notifications import show_notification
 
         show_notification("Title", "Message")
 
@@ -90,11 +90,11 @@ class TestShowRecordingStarted:
     def test_show_recording_started_uses_long_duration(self, mocker):
         """Test that recording notification uses long duration."""
         mock_show = mocker.patch(
-            "localwispr.notifications.show_notification",
+            "localwispr.ui.notifications.show_notification",
             return_value=True,
         )
 
-        from localwispr.notifications import show_recording_started
+        from localwispr.ui.notifications import show_recording_started
 
         show_recording_started()
 
@@ -109,11 +109,11 @@ class TestShowTranscribing:
     def test_show_transcribing_uses_long_duration(self, mocker):
         """Test that transcribing notification uses long duration."""
         mock_show = mocker.patch(
-            "localwispr.notifications.show_notification",
+            "localwispr.ui.notifications.show_notification",
             return_value=True,
         )
 
-        from localwispr.notifications import show_transcribing
+        from localwispr.ui.notifications import show_transcribing
 
         show_transcribing()
 
@@ -128,11 +128,11 @@ class TestShowComplete:
     def test_show_complete_uses_short_duration(self, mocker):
         """Test that complete notification uses short duration."""
         mock_show = mocker.patch(
-            "localwispr.notifications.show_notification",
+            "localwispr.ui.notifications.show_notification",
             return_value=True,
         )
 
-        from localwispr.notifications import show_complete
+        from localwispr.ui.notifications import show_complete
 
         show_complete()
 
@@ -147,11 +147,11 @@ class TestShowError:
     def test_show_error_sanitizes_message(self, mocker):
         """Test that error messages are sanitized."""
         mock_show = mocker.patch(
-            "localwispr.notifications.show_notification",
+            "localwispr.ui.notifications.show_notification",
             return_value=True,
         )
 
-        from localwispr.notifications import show_error
+        from localwispr.ui.notifications import show_error
 
         # Message with newlines
         show_error("Error\nwith\nnewlines")
@@ -165,11 +165,11 @@ class TestShowError:
     def test_show_error_truncates_long_message(self, mocker):
         """Test that long messages are truncated."""
         mock_show = mocker.patch(
-            "localwispr.notifications.show_notification",
+            "localwispr.ui.notifications.show_notification",
             return_value=True,
         )
 
-        from localwispr.notifications import show_error
+        from localwispr.ui.notifications import show_error
 
         # Very long message
         long_message = "x" * 200
@@ -186,11 +186,11 @@ class TestShowClipboardOnly:
     def test_show_clipboard_only_correct_message(self, mocker):
         """Test that clipboard-only notification has correct message."""
         mock_show = mocker.patch(
-            "localwispr.notifications.show_notification",
+            "localwispr.ui.notifications.show_notification",
             return_value=True,
         )
 
-        from localwispr.notifications import show_clipboard_only
+        from localwispr.ui.notifications import show_clipboard_only
 
         show_clipboard_only()
 

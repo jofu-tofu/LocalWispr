@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 from localwispr.config import clear_config_cache, get_config, reload_config, save_config
-from localwispr.settings_manager import get_settings_manager
+from localwispr.settings.manager import get_settings_manager
 
 
 class TestCriticalSettingsPropagation:
@@ -45,10 +45,10 @@ class TestCriticalSettingsPropagation:
         config_path = full_app_context["config_path"]
 
         # Mock OverlayWidget to allow TrayApp initialization in tests
-        mocker.patch("localwispr.overlay.OverlayWidget")
+        mocker.patch("localwispr.ui.overlay.OverlayWidget")
 
         # Reset settings manager to avoid cross-test contamination
-        import localwispr.settings_manager as sm_module
+        import localwispr.settings.manager as sm_module
         sm_module._settings_manager = None
 
         # Spy on pipeline methods BEFORE TrayApp creates pipeline
@@ -58,7 +58,7 @@ class TestCriticalSettingsPropagation:
         clear_preload_spy = mocker.spy(RecordingPipeline, "clear_model_preload")
 
         # Step 1: Create TrayApp (this auto-registers handlers via _register_settings_handlers)
-        from localwispr.tray import TrayApp
+        from localwispr.ui.tray import TrayApp
         app = TrayApp()
 
         # Step 2: Verify initial state (tiny model)
@@ -121,14 +121,14 @@ class TestCriticalSettingsPropagation:
         config_path = full_app_context["config_path"]
 
         # Mock OverlayWidget to allow TrayApp initialization
-        mocker.patch("localwispr.overlay.OverlayWidget")
+        mocker.patch("localwispr.ui.overlay.OverlayWidget")
 
         # Reset settings manager
-        import localwispr.settings_manager as sm_module
+        import localwispr.settings.manager as sm_module
         sm_module._settings_manager = None
 
         # Spy on _restart_hotkey_listener BEFORE TrayApp is created
-        from localwispr.tray import TrayApp
+        from localwispr.ui.tray import TrayApp
         restart_spy = mocker.spy(TrayApp, "_restart_hotkey_listener")
 
         # Step 1: Create TrayApp (auto-registers handlers)
@@ -209,7 +209,7 @@ class TestCriticalSettingsPropagation:
         manager = get_settings_manager()
 
         # Register handler for streaming flag
-        from localwispr.settings_manager import SETTINGS_INVALIDATION, InvalidationFlags
+        from localwispr.settings.manager import SETTINGS_INVALIDATION, InvalidationFlags
 
         streaming_flags = SETTINGS_INVALIDATION.get("streaming.enabled", InvalidationFlags.NONE)
 
@@ -247,10 +247,10 @@ class TestSettingsChangeWorkflows:
         config_path = full_app_context["config_path"]
 
         # Mock OverlayWidget
-        mocker.patch("localwispr.overlay.OverlayWidget")
+        mocker.patch("localwispr.ui.overlay.OverlayWidget")
 
         # Reset settings manager
-        import localwispr.settings_manager as sm_module
+        import localwispr.settings.manager as sm_module
         sm_module._settings_manager = None
 
         # Spy BEFORE TrayApp is created
@@ -258,7 +258,7 @@ class TestSettingsChangeWorkflows:
         invalidate_spy = mocker.spy(RecordingPipeline, "invalidate_transcriber")
 
         # Create TrayApp
-        from localwispr.tray import TrayApp
+        from localwispr.ui.tray import TrayApp
         app = TrayApp()
 
         # Start recording
@@ -302,10 +302,10 @@ class TestSettingsChangeWorkflows:
         config_path = full_app_context["config_path"]
 
         # Mock OverlayWidget
-        mocker.patch("localwispr.overlay.OverlayWidget")
+        mocker.patch("localwispr.ui.overlay.OverlayWidget")
 
         # Reset settings manager
-        import localwispr.settings_manager as sm_module
+        import localwispr.settings.manager as sm_module
         sm_module._settings_manager = None
 
         # Spy BEFORE TrayApp is created
@@ -314,7 +314,7 @@ class TestSettingsChangeWorkflows:
         invalidate_spy = mocker.spy(RecordingPipeline, "invalidate_transcriber")
 
         # Create TrayApp (auto-registers both handlers)
-        from localwispr.tray import TrayApp
+        from localwispr.ui.tray import TrayApp
         app = TrayApp()
 
         # Change model
@@ -387,14 +387,14 @@ class TestSettingsChangeWorkflows:
         config_path = full_app_context["config_path"]
 
         # Mock OverlayWidget
-        mocker.patch("localwispr.overlay.OverlayWidget")
+        mocker.patch("localwispr.ui.overlay.OverlayWidget")
 
         # Reset settings manager
-        import localwispr.settings_manager as sm_module
+        import localwispr.settings.manager as sm_module
         sm_module._settings_manager = None
 
         # Create TrayApp (starts with DICTATION mode by default)
-        from localwispr.tray import TrayApp
+        from localwispr.ui.tray import TrayApp
         app = TrayApp()
 
         # Verify default transcription mode
@@ -439,10 +439,10 @@ class TestSettingsChangeWorkflows:
         config_path = full_app_context["config_path"]
 
         # Mock OverlayWidget
-        mocker.patch("localwispr.overlay.OverlayWidget")
+        mocker.patch("localwispr.ui.overlay.OverlayWidget")
 
         # Reset settings manager
-        import localwispr.settings_manager as sm_module
+        import localwispr.settings.manager as sm_module
         sm_module._settings_manager = None
 
         # Spy BEFORE TrayApp is created
@@ -450,7 +450,7 @@ class TestSettingsChangeWorkflows:
         invalidate_spy = mocker.spy(RecordingPipeline, "invalidate_transcriber")
 
         # Create TrayApp
-        from localwispr.tray import TrayApp
+        from localwispr.ui.tray import TrayApp
         app = TrayApp()
 
         initial_config = get_config()
@@ -491,15 +491,15 @@ class TestSettingsChangeWorkflows:
         config_path = full_app_context["config_path"]
 
         # Mock OverlayWidget
-        mocker.patch("localwispr.overlay.OverlayWidget")
+        mocker.patch("localwispr.ui.overlay.OverlayWidget")
 
         # Reset settings manager
-        import localwispr.settings_manager as sm_module
+        import localwispr.settings.manager as sm_module
         sm_module._settings_manager = None
 
         # Spy BEFORE TrayApp is created
         from localwispr.pipeline import RecordingPipeline
-        from localwispr.tray import TrayApp
+        from localwispr.ui.tray import TrayApp
         invalidate_spy = mocker.spy(RecordingPipeline, "invalidate_transcriber")
         restart_spy = mocker.spy(TrayApp, "_restart_hotkey_listener")
 
@@ -511,7 +511,7 @@ class TestSettingsChangeWorkflows:
         original_model = initial_config["model"]["name"]
 
         # Create an INVALID config snapshot (for validation testing)
-        from localwispr.settings_model import SettingsSnapshot, SettingsValidator
+        from localwispr.settings.model import SettingsSnapshot, SettingsValidator
         from dataclasses import replace
 
         valid_snapshot = SettingsSnapshot.from_config_dict(initial_config)

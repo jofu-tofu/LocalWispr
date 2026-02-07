@@ -275,7 +275,7 @@ class TrayApp:
         )
 
         # Floating overlay widget for visual feedback
-        from localwispr.overlay import OverlayWidget
+        from localwispr.ui.overlay import OverlayWidget
 
         self._overlay = OverlayWidget(
             audio_level_callback=self._get_current_audio_level,
@@ -488,7 +488,7 @@ class TrayApp:
 
     def _on_settings(self, icon: "pystray.Icon", item: "pystray.MenuItem") -> None:
         """Handle Settings menu item."""
-        from localwispr.settings_window import open_settings
+        from localwispr.settings.window import open_settings
 
         logger.info("tray_app: opening settings window")
         open_settings(on_settings_changed=self._on_settings_changed)
@@ -501,7 +501,7 @@ class TrayApp:
         Args:
             mode: The new Mode object.
         """
-        from localwispr.notifications import show_notification
+        from localwispr.ui.notifications import show_notification
 
         logger.info("tray_app: mode changed to %s", mode.name)
 
@@ -533,7 +533,7 @@ class TrayApp:
 
     def _on_about(self, icon: "pystray.Icon", item: "pystray.MenuItem") -> None:
         """Handle About menu item."""
-        from localwispr.notifications import show_notification
+        from localwispr.ui.notifications import show_notification
 
         variant_info = " [TEST BUILD]" if IS_TEST_BUILD else ""
         show_notification(
@@ -605,7 +605,7 @@ class TrayApp:
         Delegates to RecordingPipeline for actual recording.
         """
         from localwispr.config import get_config
-        from localwispr.feedback import play_start_beep
+        from localwispr.audio.feedback import play_start_beep
 
         logger.info("recording: start")
 
@@ -796,7 +796,7 @@ class TrayApp:
         Called during initialization to set up automatic invalidation
         when settings change.
         """
-        from localwispr.settings_manager import (
+        from localwispr.settings.manager import (
             InvalidationFlags,
             get_settings_manager,
         )
@@ -853,9 +853,24 @@ class TrayApp:
             # Start the floating overlay widget
             self._overlay.start()
 
-            # Start model preloading via pipeline (non-blocking)
-            self._pipeline.preload_model_async()
-            logger.info("model_preload: delegated to pipeline")
+            # Conditional model preloading - only if model is already downloaded
+            from localwispr.config import get_config
+            from localwispr.transcribe.model_manager import is_model_downloaded
+
+            config = get_config()
+            model_name = config["model"]["name"]
+
+            if is_model_downloaded(model_name):
+                # Model cached - preload in background
+                self._pipeline.preload_model_async()
+                logger.info("model_preload: model %s cached, starting preload", model_name)
+            else:
+                # Model not downloaded - skip preload, user must download via Settings
+                logger.info(
+                    "model_preload: model %s not downloaded, skipping preload. "
+                    "User should download via Settings.",
+                    model_name,
+                )
 
             # Start the hotkey listener
             try:

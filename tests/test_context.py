@@ -2,7 +2,7 @@
 
 import pytest
 
-from localwispr.context import ContextDetector, ContextType
+from localwispr.transcribe.context import ContextDetector, ContextType
 from localwispr.prompts import load_prompt, get_available_contexts
 
 

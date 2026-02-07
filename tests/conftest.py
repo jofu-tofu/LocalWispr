@@ -2,7 +2,7 @@
 
 This module provides reusable fixtures for mocking:
 - Audio recording (sounddevice)
-- Whisper transcription (faster_whisper)
+- Whisper transcription (pywhispercpp)
 - Clipboard operations (pyperclip)
 - Configuration loading
 - Mode management
@@ -81,7 +81,7 @@ def mock_sounddevice(mocker) -> MagicMock:
     Returns:
         Mock sounddevice module.
     """
-    mock_sd = mocker.patch("localwispr.audio.sd")
+    mock_sd = mocker.patch("localwispr.audio.recorder.sd")
 
     # Mock default device
     mock_sd.default.device = (0, None)
@@ -271,7 +271,7 @@ def mock_model_downloaded(mocker):
     Returns:
         The mock object for is_model_downloaded.
     """
-    return mocker.patch("localwispr.model_manager.is_model_downloaded", return_value=True)
+    return mocker.patch("localwispr.transcribe.model_manager.is_model_downloaded", return_value=True)
 
 
 # ============================================================================
@@ -347,10 +347,10 @@ def mock_whisper_transcriber(mocker):
     mock_result.segments = [{"start": 0.0, "end": 1.0, "text": "test transcription"}]
 
     mock_transcriber.transcribe.return_value = mock_result
-    mocker.patch("localwispr.transcribe.WhisperTranscriber", return_value=mock_transcriber)
+    mocker.patch("localwispr.transcribe.transcriber.WhisperTranscriber", return_value=mock_transcriber)
 
     # Mock is_model_downloaded to return True so preload_model_async succeeds
-    mocker.patch("localwispr.model_manager.is_model_downloaded", return_value=True)
+    mocker.patch("localwispr.transcribe.model_manager.is_model_downloaded", return_value=True)
 
     return mock_transcriber
 
@@ -376,7 +376,7 @@ def full_app_context(tmp_path, mocker):
 
     This fixture provides:
     - Temporary config file (isolated from user settings)
-    - Mocked external deps: sounddevice, faster_whisper
+    - Mocked external deps: sounddevice, pywhispercpp
     - Real components: config system, settings manager, pipeline, mode manager
 
     Use this for integration tests that need to verify end-to-end workflows
@@ -430,7 +430,7 @@ vad_threshold = 0.5
     mocks = {}
 
     # Mock sounddevice
-    mock_sd = mocker.patch("localwispr.audio.sd")
+    mock_sd = mocker.patch("localwispr.audio.recorder.sd")
     mock_sd.default.device = (0, None)
     mock_sd.query_devices.return_value = {
         "name": "Mock Microphone",
@@ -442,21 +442,20 @@ vad_threshold = 0.5
     mock_sd.InputStream.return_value = mock_stream
     mocks["sounddevice"] = mock_sd
 
-    # Mock WhisperModel
-    # NOTE: Patches faster_whisper.WhisperModel at SOURCE, not usage location.
-    # This is correct: transcribe.py uses TYPE_CHECKING guard (line 16), meaning
-    # WhisperModel is only imported inside methods for lazy loading. Source-level
+    # Mock pywhispercpp Model
+    # NOTE: Patches pywhispercpp.model.Model at SOURCE, not usage location.
+    # This is correct: transcribe.py uses TYPE_CHECKING guard, meaning
+    # Model is only imported inside methods for lazy loading. Source-level
     # patching is required for lazy imports - usage location doesn't exist yet.
     mock_whisper_model = MagicMock()
     segments = [MockSegment(text="test transcription")]
-    info = MockTranscriptionInfo()
-    mock_whisper_model.transcribe.return_value = (iter(segments), info)
-    mock_whisper_class = mocker.patch("faster_whisper.WhisperModel")
+    mock_whisper_model.transcribe.return_value = segments
+    mock_whisper_class = mocker.patch("pywhispercpp.model.Model")
     mock_whisper_class.return_value = mock_whisper_model
     mocks["whisper"] = mock_whisper_class
 
     # Mock is_model_downloaded to return True so model preload succeeds
-    mock_model_downloaded = mocker.patch("localwispr.model_manager.is_model_downloaded", return_value=True)
+    mock_model_downloaded = mocker.patch("localwispr.transcribe.model_manager.is_model_downloaded", return_value=True)
     mocks["model_downloaded"] = mock_model_downloaded
 
     # Patch load_config to use temp file
@@ -465,7 +464,7 @@ vad_threshold = 0.5
 
     # Import the real load_config function to use in our side_effect
     from localwispr.config import load_config as real_load_config
-    mocker.patch("localwispr.config.load_config", side_effect=lambda path=None: real_load_config(config_path))
+    mocker.patch("localwispr.config.loader.load_config", side_effect=lambda path=None: real_load_config(config_path))
 
     context = {
         "config_path": config_path,
@@ -506,11 +505,11 @@ def isolated_config_cache():
     Use this fixture for tests that modify or stress-test the config cache.
     Restores original cache state after test completes.
     """
-    from localwispr import config as config_module
+    from localwispr.config import cache as config_cache_module
     from localwispr.config import clear_config_cache
 
     # Save original state
-    original_cache = config_module._cached_config
+    original_cache = config_cache_module._cached_config
 
     # Clear for test isolation
     clear_config_cache()
@@ -518,4 +517,4 @@ def isolated_config_cache():
     yield
 
     # Restore original state
-    config_module._cached_config = original_cache
+    config_cache_module._cached_config = original_cache

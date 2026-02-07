@@ -21,11 +21,11 @@ from typing import TYPE_CHECKING, Callable
 import numpy as np
 
 from localwispr.audio import WHISPER_SAMPLE_RATE, prepare_for_whisper
-from localwispr.context import ContextDetector, ContextType
+from localwispr.transcribe.context import ContextDetector, ContextType
 from localwispr.prompts import load_prompt
 
 if TYPE_CHECKING:
-    from localwispr.transcribe import WhisperTranscriber
+    from localwispr.transcribe.transcriber import WhisperTranscriber
 
 logger = logging.getLogger(__name__)
 

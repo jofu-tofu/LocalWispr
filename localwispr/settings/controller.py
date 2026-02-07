@@ -9,10 +9,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Callable
 
-from localwispr.settings_model import SettingsSnapshot, SettingsValidator
+from localwispr.settings.model import SettingsSnapshot, SettingsValidator
 
 if TYPE_CHECKING:
-    from localwispr.settings_view import SettingsViewProtocol
+    from localwispr.settings.view import SettingsViewProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ class SettingsController:
         6. Update original to match (no longer dirty)
         """
         from localwispr.config import reload_config, save_config
-        from localwispr.settings_manager import get_settings_manager
+        from localwispr.settings.manager import get_settings_manager
 
         logger.info("settings_controller: save requested")
 
@@ -135,7 +135,7 @@ class SettingsController:
         except Exception as e:
             logger.error("settings_controller: save failed: %s", e)
             # Show save error via validation errors
-            from localwispr.settings_model import ValidationResult
+            from localwispr.settings.model import ValidationResult
             error_result = ValidationResult()
             error_result.add_error("_save", f"Failed to save: {e}")
             self._view.show_validation_errors(error_result)

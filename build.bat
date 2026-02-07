@@ -5,6 +5,7 @@ REM   build.bat           - Build stable version (hidden console)
 REM   build.bat stable    - Build stable version (hidden console)
 REM   build.bat test      - Build test version (visible console)
 REM   build.bat both      - Build both versions
+REM   build.bat installer - Build stable + Windows installer
 
 setlocal enabledelayedexpansion
 
@@ -75,6 +76,12 @@ if /i "%BUILD_TARGET%"=="both" (
     call :build_variant test
     if errorlevel 1 exit /b 1
     goto :build_complete_test
+) else if /i "%BUILD_TARGET%"=="installer" (
+    call :build_variant stable
+    if errorlevel 1 exit /b 1
+    call build-installer.bat
+    if errorlevel 1 exit /b 1
+    goto :build_complete_installer
 ) else (
     call :build_variant stable
     if errorlevel 1 exit /b 1
@@ -175,5 +182,20 @@ echo   - Hotkey: Ctrl+Alt+Shift
 echo   - Icon: Orange wave
 echo.
 echo Both can run simultaneously!
+echo ========================================
+goto :eof
+
+:build_complete_installer
+echo.
+echo ========================================
+echo INSTALLER Build complete!
+echo.
+echo Installer: dist\LocalWispr-Setup-0.1.0.exe
+echo.
+echo To test:
+echo   1. Run the installer
+echo   2. Install to a clean location
+echo   3. First-run wizard will download a model
+echo   4. Test transcription with hotkey
 echo ========================================
 goto :eof

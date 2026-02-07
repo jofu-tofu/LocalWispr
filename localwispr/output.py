@@ -178,7 +178,7 @@ def output_transcription(
     # Play audio feedback before paste to alert user
     if play_feedback:
         try:
-            from localwispr.feedback import play_stop_beep
+            from localwispr.audio.feedback import play_stop_beep
 
             play_stop_beep()
         except Exception:

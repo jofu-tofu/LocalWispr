@@ -12,7 +12,7 @@ class TestGenerateTone:
 
     def test_generate_tone_returns_array(self):
         """Test that _generate_tone returns a numpy array."""
-        from localwispr.feedback import _generate_tone
+        from localwispr.audio.feedback import _generate_tone
 
         tone = _generate_tone(440, 100)
 
@@ -21,7 +21,7 @@ class TestGenerateTone:
 
     def test_generate_tone_correct_length(self):
         """Test that tone has correct sample length for duration."""
-        from localwispr.feedback import _generate_tone
+        from localwispr.audio.feedback import _generate_tone
 
         # 100ms at 44100Hz = 4410 samples
         tone = _generate_tone(440, 100, sample_rate=44100)
@@ -30,7 +30,7 @@ class TestGenerateTone:
 
     def test_generate_tone_volume_scaling(self):
         """Test that volume parameter scales the output."""
-        from localwispr.feedback import _generate_tone
+        from localwispr.audio.feedback import _generate_tone
 
         tone_quiet = _generate_tone(440, 100, volume=0.1)
         tone_loud = _generate_tone(440, 100, volume=0.5)
@@ -40,7 +40,7 @@ class TestGenerateTone:
 
     def test_generate_tone_frequency_affects_waveform(self):
         """Test that different frequencies produce different waveforms."""
-        from localwispr.feedback import _generate_tone
+        from localwispr.audio.feedback import _generate_tone
 
         tone_low = _generate_tone(100, 100)
         tone_high = _generate_tone(1000, 100)
@@ -50,7 +50,7 @@ class TestGenerateTone:
 
     def test_generate_tone_fade_envelope(self):
         """Test that fade in/out is applied to avoid clicks."""
-        from localwispr.feedback import _generate_tone
+        from localwispr.audio.feedback import _generate_tone
 
         tone = _generate_tone(440, 100, fade_ms=10)
 
@@ -64,11 +64,11 @@ class TestPlayToneAsync:
 
     def test_play_tone_async_calls_sounddevice(self, mocker):
         """Test that _play_tone_async calls sd.play."""
-        mock_sd = mocker.patch("localwispr.feedback.sd")
+        mock_sd = mocker.patch("localwispr.audio.feedback.sd")
         mock_sd.play = MagicMock()
         mock_sd.wait = MagicMock()
 
-        from localwispr.feedback import _play_tone_async
+        from localwispr.audio.feedback import _play_tone_async
 
         _play_tone_async(440, 100)
 
@@ -81,10 +81,10 @@ class TestPlayToneAsync:
 
     def test_play_tone_async_handles_exception(self, mocker):
         """Test that _play_tone_async handles sounddevice errors gracefully."""
-        mock_sd = mocker.patch("localwispr.feedback.sd")
+        mock_sd = mocker.patch("localwispr.audio.feedback.sd")
         mock_sd.play.side_effect = Exception("Audio device error")
 
-        from localwispr.feedback import _play_tone_async
+        from localwispr.audio.feedback import _play_tone_async
 
         # Should not raise - errors are silently ignored
         _play_tone_async(440, 100)
@@ -98,9 +98,9 @@ class TestPlayStartBeep:
 
     def test_play_start_beep_calls_play_tone(self, mocker):
         """Test that play_start_beep calls _play_tone_async with correct params."""
-        mock_play = mocker.patch("localwispr.feedback._play_tone_async")
+        mock_play = mocker.patch("localwispr.audio.feedback._play_tone_async")
 
-        from localwispr.feedback import play_start_beep
+        from localwispr.audio.feedback import play_start_beep
 
         play_start_beep()
 
@@ -112,9 +112,9 @@ class TestPlayStopBeep:
 
     def test_play_stop_beep_calls_play_tone(self, mocker):
         """Test that play_stop_beep calls _play_tone_async with correct params."""
-        mock_play = mocker.patch("localwispr.feedback._play_tone_async")
+        mock_play = mocker.patch("localwispr.audio.feedback._play_tone_async")
 
-        from localwispr.feedback import play_stop_beep
+        from localwispr.audio.feedback import play_stop_beep
 
         play_stop_beep()
 

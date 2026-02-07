@@ -6,7 +6,7 @@ import sys
 
 from localwispr import __version__
 from localwispr.config import get_config
-from localwispr.tray import TrayApp
+from localwispr.ui.tray import TrayApp
 
 
 def print_banner() -> None:
@@ -39,7 +39,7 @@ def print_config_info(config: dict) -> None:
 def print_gpu_info() -> None:
     """Try to print GPU information if gpu module is available."""
     try:
-        from localwispr.gpu import check_gpu
+        from localwispr.transcribe.gpu import check_gpu
 
         print("GPU Information")
         print("-" * 40)

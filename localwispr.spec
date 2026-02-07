@@ -30,12 +30,18 @@ datas = [
     (str(ROOT / 'localwispr' / 'prompts' / '*.txt'), 'localwispr/prompts'),
 ]
 
-# Collect faster_whisper assets (Silero VAD model)
+# Collect pywhispercpp data files if present
 from PyInstaller.utils.hooks import collect_data_files
-datas += collect_data_files('faster_whisper')
+try:
+    datas += collect_data_files('pywhispercpp')
+except Exception:
+    pass
 
 # Collect setuptools/jaraco data files (needed for pkg_resources)
-datas += collect_data_files('setuptools._vendor.jaraco.text')
+try:
+    datas += collect_data_files('setuptools._vendor.jaraco.text')
+except Exception:
+    pass
 
 # Hidden imports that PyInstaller might miss
 hiddenimports = [
@@ -44,10 +50,9 @@ hiddenimports = [
     # pynput backends
     'pynput.keyboard._win32',
     'pynput.mouse._win32',
-    # faster-whisper / ctranslate2 dependencies
-    'ctranslate2',
-    'huggingface_hub',
-    'tokenizers',
+    # pywhispercpp dependencies
+    'pywhispercpp',
+    'pywhispercpp.model',
     # Audio
     'sounddevice',
     '_sounddevice_data',
@@ -59,6 +64,9 @@ hiddenimports = [
     'winotify',
     # PIL/Pillow
     'PIL._tkinter_finder',
+    # torch for Silero VAD
+    'torch',
+    'torchaudio',
 ]
 
 a = Analysis(

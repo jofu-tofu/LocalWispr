@@ -12,28 +12,26 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 
-
 class TestSettingsWindowCreation:
-    """Tests for SettingsWindow instantiation and setup."""
+    """Tests for TkinterSettingsView instantiation and setup."""
 
     def test_settings_window_instantiation(self):
-        """Test that SettingsWindow can be instantiated."""
-        from localwispr.settings_window import SettingsWindow
+        """Test that TkinterSettingsView can be instantiated."""
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         assert window._window is None
         assert window._root is None
-        assert window._config is None
+        assert window.on_save_requested is None
+        assert window.on_cancel_requested is None
+        assert window.on_setting_changed is None
 
-    def test_settings_window_with_callback(self):
-        """Test SettingsWindow with callback."""
-        from localwispr.settings_window import SettingsWindow
+    def test_settings_window_alias(self):
+        """Test that SettingsWindow alias works."""
+        from localwispr.settings.window import SettingsWindow, TkinterSettingsView
 
-        callback = MagicMock()
-        window = SettingsWindow(on_settings_changed=callback)
-
-        assert window._on_settings_changed is callback
+        assert SettingsWindow is TkinterSettingsView
 
 
 class TestSettingsWindowConstants:
@@ -41,7 +39,7 @@ class TestSettingsWindowConstants:
 
     def test_model_sizes_defined(self):
         """Test that MODEL_SIZES contains expected options."""
-        from localwispr.settings_window import MODEL_SIZES
+        from localwispr.settings.window import MODEL_SIZES
 
         assert "tiny" in MODEL_SIZES
         assert "base" in MODEL_SIZES
@@ -51,14 +49,14 @@ class TestSettingsWindowConstants:
 
     def test_devices_defined(self):
         """Test that DEVICES contains expected options."""
-        from localwispr.settings_window import DEVICES
+        from localwispr.settings.window import DEVICES
 
         assert "cuda" in DEVICES
         assert "cpu" in DEVICES
 
     def test_compute_types_defined(self):
         """Test that COMPUTE_TYPES contains expected options."""
-        from localwispr.settings_window import COMPUTE_TYPES
+        from localwispr.settings.window import COMPUTE_TYPES
 
         assert "float16" in COMPUTE_TYPES
         assert "int8" in COMPUTE_TYPES
@@ -66,7 +64,7 @@ class TestSettingsWindowConstants:
 
     def test_languages_defined(self):
         """Test that LANGUAGES contains expected options."""
-        from localwispr.settings_window import LANGUAGES
+        from localwispr.settings.window import LANGUAGES
 
         language_codes = [code for _, code in LANGUAGES]
 
@@ -81,125 +79,61 @@ class TestSettingsWindowDimensions:
 
     def test_window_dimensions(self):
         """Test that window dimensions are reasonable."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        assert SettingsWindow.WINDOW_WIDTH > 0
-        assert SettingsWindow.WINDOW_HEIGHT > 0
-        assert SettingsWindow.WINDOW_WIDTH >= 400
-        assert SettingsWindow.WINDOW_HEIGHT >= 400
+        assert TkinterSettingsView.WINDOW_WIDTH > 0
+        assert TkinterSettingsView.WINDOW_HEIGHT > 0
+        assert TkinterSettingsView.WINDOW_WIDTH >= 400
+        assert TkinterSettingsView.WINDOW_HEIGHT >= 400
 
 
 class TestOpenSettingsFunction:
     """Tests for the open_settings convenience function."""
 
-    def test_open_settings_creates_window(self, mocker):
-        """Test that open_settings creates a SettingsWindow."""
-        # Mock the window creation to avoid GUI
-        mock_window = MagicMock()
-        mock_window_class = mocker.patch(
-            "localwispr.settings_window.SettingsWindow",
-            return_value=mock_window,
+    def test_open_settings_creates_controller(self, mocker):
+        """Test that open_settings creates a SettingsController."""
+        mock_view_instance = MagicMock()
+        mocker.patch(
+            "localwispr.settings.window.TkinterSettingsView",
+            return_value=mock_view_instance,
+        )
+        mock_controller_instance = MagicMock()
+        mock_controller_class = mocker.patch(
+            "localwispr.settings.controller.SettingsController",
+            return_value=mock_controller_instance,
         )
 
-        from localwispr.settings_window import open_settings
+        from localwispr.settings.window import open_settings
 
         open_settings()
 
-        mock_window_class.assert_called_once()
-        mock_window.show.assert_called_once()
+        mock_controller_class.assert_called_once_with(
+            mock_view_instance, on_settings_applied=None
+        )
+        mock_controller_instance.open.assert_called_once()
 
     def test_open_settings_passes_callback(self, mocker):
-        """Test that open_settings passes callback to window."""
-        mock_window = MagicMock()
-        mock_window_class = mocker.patch(
-            "localwispr.settings_window.SettingsWindow",
-            return_value=mock_window,
+        """Test that open_settings passes callback to controller."""
+        mock_view_instance = MagicMock()
+        mocker.patch(
+            "localwispr.settings.window.TkinterSettingsView",
+            return_value=mock_view_instance,
+        )
+        mock_controller_instance = MagicMock()
+        mock_controller_class = mocker.patch(
+            "localwispr.settings.controller.SettingsController",
+            return_value=mock_controller_instance,
         )
 
         callback = MagicMock()
 
-        from localwispr.settings_window import open_settings
+        from localwispr.settings.window import open_settings
 
         open_settings(on_settings_changed=callback)
 
-        mock_window_class.assert_called_once_with(on_settings_changed=callback)
-
-
-class TestSettingsWindowConfigLoading:
-    """Tests for configuration loading in settings window."""
-
-    def test_settings_window_loads_config(self, mocker, mock_config, tmp_path):
-        """Test that settings window loads config on creation."""
-        # Mock config loading
-        mocker.patch("localwispr.config.get_config", return_value=mock_config)
-        mocker.patch("localwispr.config.load_config", return_value=mock_config)
-        mocker.patch("localwispr.config._get_config_path", return_value=tmp_path / "config.toml")
-
-        # We can't fully test GUI creation without a display,
-        # but we can test the logic
-        from localwispr.settings_window import SettingsWindow
-
-        window = SettingsWindow()
-
-        # The config is loaded in _create_window, which runs in a thread
-        # For unit testing, we verify the structure is correct
-        assert window._config is None  # Not loaded until show() is called
-
-
-class TestSettingsWindowSaveLogic:
-    """Tests for settings save logic."""
-
-    def test_auto_save_builds_correct_structure(self, mocker, mock_config, tmp_path):
-        """Test that auto-save builds config with correct structure."""
-        mocker.patch("localwispr.config.get_config", return_value=mock_config)
-        mocker.patch("localwispr.config.load_config", return_value=mock_config)
-        mocker.patch("localwispr.config._get_config_path", return_value=tmp_path / "config.toml")
-
-        save_mock = mocker.patch("localwispr.config.save_config")
-        mocker.patch("localwispr.config.reload_config", return_value=mock_config)
-
-        from localwispr.settings_window import SettingsWindow
-
-        window = SettingsWindow()
-        window._config = mock_config
-
-        # Mock tkinter variables
-
-        window._root = MagicMock()
-        window._window = MagicMock()
-
-        # Create mock variables that behave like tk.Variable
-        window._vars = {
-            "mode": MagicMock(get=lambda: "toggle"),
-            "audio_feedback": MagicMock(get=lambda: True),
-            "mute_system": MagicMock(get=lambda: False),
-            "auto_paste": MagicMock(get=lambda: True),
-            "paste_delay_ms": MagicMock(get=lambda: 50),
-            "model_name": MagicMock(get=lambda: "large-v3"),
-            "device": MagicMock(get=lambda: "cuda"),
-            "compute_type": MagicMock(get=lambda: "float16"),
-            "language": MagicMock(get=lambda: "auto"),
-            "streaming_enabled": MagicMock(get=lambda: False),
-        }
-
-        # Mock vocabulary listbox
-        window._vocab_listbox = MagicMock()
-        window._vocab_listbox.get.return_value = ["word1", "word2"]
-
-        # Call auto-save directly
-        window._do_save()
-
-        # Verify save was called with proper structure
-        save_mock.assert_called_once()
-        saved_config = save_mock.call_args[0][0]
-
-        assert "model" in saved_config
-        assert "hotkeys" in saved_config
-        assert "output" in saved_config
-        assert "vocabulary" in saved_config
-
-        assert saved_config["hotkeys"]["mode"] == "toggle"
-        assert saved_config["model"]["name"] == "large-v3"
+        mock_controller_class.assert_called_once_with(
+            mock_view_instance, on_settings_applied=callback
+        )
 
 
 class TestVocabularyValidation:
@@ -207,9 +141,9 @@ class TestVocabularyValidation:
 
     def test_validate_vocab_word_valid(self):
         """Test validation accepts valid words."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         is_valid, result = window._validate_vocab_word("hello")
         assert is_valid is True
@@ -217,9 +151,9 @@ class TestVocabularyValidation:
 
     def test_validate_vocab_word_strips_whitespace(self):
         """Test validation strips leading/trailing whitespace."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         is_valid, result = window._validate_vocab_word("  hello  ")
         assert is_valid is True
@@ -227,9 +161,9 @@ class TestVocabularyValidation:
 
     def test_validate_vocab_word_empty(self):
         """Test validation rejects empty words."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         is_valid, result = window._validate_vocab_word("")
         assert is_valid is False
@@ -237,9 +171,9 @@ class TestVocabularyValidation:
 
     def test_validate_vocab_word_whitespace_only(self):
         """Test validation rejects whitespace-only input."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         is_valid, result = window._validate_vocab_word("   ")
         assert is_valid is False
@@ -247,9 +181,9 @@ class TestVocabularyValidation:
 
     def test_validate_vocab_word_too_long(self):
         """Test validation rejects words over 100 characters."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         long_word = "a" * 101
         is_valid, result = window._validate_vocab_word(long_word)
@@ -258,9 +192,9 @@ class TestVocabularyValidation:
 
     def test_validate_vocab_word_rejects_quotes(self):
         """Test validation rejects double quotes (TOML unsafe)."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         is_valid, result = window._validate_vocab_word('hello"world')
         assert is_valid is False
@@ -268,9 +202,9 @@ class TestVocabularyValidation:
 
     def test_validate_vocab_word_rejects_backslash(self):
         """Test validation rejects backslashes (TOML unsafe)."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         is_valid, result = window._validate_vocab_word("hello\\world")
         assert is_valid is False
@@ -278,9 +212,9 @@ class TestVocabularyValidation:
 
     def test_validate_vocab_word_rejects_newline(self):
         """Test validation rejects newlines (TOML unsafe)."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         is_valid, result = window._validate_vocab_word("hello\nworld")
         assert is_valid is False
@@ -288,9 +222,9 @@ class TestVocabularyValidation:
 
     def test_validate_vocab_word_rejects_tab(self):
         """Test validation rejects tabs (TOML unsafe)."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         is_valid, result = window._validate_vocab_word("hello\tworld")
         assert is_valid is False
@@ -298,9 +232,9 @@ class TestVocabularyValidation:
 
     def test_validate_vocab_word_accepts_spaces(self):
         """Test validation accepts words with internal spaces."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         is_valid, result = window._validate_vocab_word("hello world")
         assert is_valid is True
@@ -308,9 +242,9 @@ class TestVocabularyValidation:
 
     def test_validate_vocab_word_accepts_unicode(self):
         """Test validation accepts unicode characters."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         # Common unicode scenarios
         is_valid, result = window._validate_vocab_word("cafe")
@@ -322,9 +256,9 @@ class TestSettingsWindowMockedGUI:
 
     def test_add_vocab_word(self, mocker):
         """Test adding a vocabulary word."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         # Mock listbox and entry
         window._vocab_listbox = MagicMock()
@@ -333,23 +267,24 @@ class TestSettingsWindowMockedGUI:
         window._vocab_entry = MagicMock()
         window._vocab_entry.get.return_value = "newword"
 
-        # Mock _schedule_save to avoid timer issues
-        window._schedule_save = MagicMock()
+        # Set up on_setting_changed callback
+        callback = MagicMock()
+        window.on_setting_changed = callback
 
         window._add_vocab_word()
 
         window._vocab_listbox.insert.assert_called_once()
         window._vocab_entry.delete.assert_called_once()
-        window._schedule_save.assert_called_once()  # Verify auto-save triggered
+        callback.assert_called_once_with("vocabulary_words", None)
 
     def test_add_vocab_word_duplicate_rejected(self, mocker):
         """Test that duplicate vocabulary words are rejected."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        # Mock messagebox before creating window
-        mocker.patch("localwispr.settings_window.messagebox")
+        # Mock messagebox in window_tabs where _add_vocab_word lives
+        mocker.patch("localwispr.settings.window_tabs.messagebox")
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         # Mock listbox with existing word
         window._vocab_listbox = MagicMock()
@@ -358,68 +293,50 @@ class TestSettingsWindowMockedGUI:
         window._vocab_entry = MagicMock()
         window._vocab_entry.get.return_value = "existingword"
 
-        # Mock _schedule_save
-        window._schedule_save = MagicMock()
+        # Set up on_setting_changed callback
+        callback = MagicMock()
+        window.on_setting_changed = callback
 
         window._add_vocab_word()
 
         # Should not insert duplicate
         window._vocab_listbox.insert.assert_not_called()
-        window._schedule_save.assert_not_called()  # No save on duplicate
+        callback.assert_not_called()
 
     def test_remove_vocab_words(self, mocker):
         """Test removing vocabulary words."""
-        from localwispr.settings_window import SettingsWindow
+        from localwispr.settings.window import TkinterSettingsView
 
-        window = SettingsWindow()
+        window = TkinterSettingsView()
 
         # Mock listbox with selection
         window._vocab_listbox = MagicMock()
         window._vocab_listbox.curselection.return_value = (0, 2)
 
-        # Mock _schedule_save
-        window._schedule_save = MagicMock()
+        # Set up on_setting_changed callback
+        callback = MagicMock()
+        window.on_setting_changed = callback
 
         window._remove_vocab_words()
 
         # Should delete in reverse order
         assert window._vocab_listbox.delete.call_count == 2
-        window._schedule_save.assert_called_once()  # Verify auto-save triggered
+        callback.assert_called_once_with("vocabulary_words", None)
 
-    def test_close_saves_and_closes_window(self, mocker, mock_config):
-        """Test that close performs final save and closes the window."""
-        mocker.patch("localwispr.config.save_config")
-        mocker.patch("localwispr.config.reload_config", return_value=mock_config)
+    def test_close_destroys_window(self, mocker):
+        """Test that close destroys window and root."""
+        from localwispr.settings.window import TkinterSettingsView
 
-        from localwispr.settings_window import SettingsWindow
-
-        window = SettingsWindow()
+        window = TkinterSettingsView()
         mock_window = MagicMock()
         mock_root = MagicMock()
         window._window = mock_window
         window._root = mock_root
-        window._config = mock_config
 
-        # Mock tkinter variables
-        window._vars = {
-            "mode": MagicMock(get=lambda: "toggle"),
-            "audio_feedback": MagicMock(get=lambda: True),
-            "mute_system": MagicMock(get=lambda: False),
-            "auto_paste": MagicMock(get=lambda: True),
-            "paste_delay_ms": MagicMock(get=lambda: 50),
-            "model_name": MagicMock(get=lambda: "large-v3"),
-            "device": MagicMock(get=lambda: "cuda"),
-            "compute_type": MagicMock(get=lambda: "float16"),
-            "language": MagicMock(get=lambda: "auto"),
-            "streaming_enabled": MagicMock(get=lambda: False),
-        }
+        window.close()
 
-        # Mock vocabulary listbox
-        window._vocab_listbox = MagicMock()
-        window._vocab_listbox.get.return_value = []
-
-        window._on_close()
-
-        # Check the original mocks (window._window is now None after _close)
         mock_window.destroy.assert_called_once()
         mock_root.quit.assert_called_once()
+        mock_root.destroy.assert_called_once()
+        assert window._window is None
+        assert window._root is None

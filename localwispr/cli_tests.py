@@ -21,11 +21,11 @@ from scipy.io import wavfile
 
 from localwispr.audio import AudioRecorder, AudioRecorderError
 from localwispr.config import get_config
-from localwispr.context import ContextDetector
-from localwispr.feedback import play_start_beep, play_stop_beep
+from localwispr.transcribe.context import ContextDetector
+from localwispr.audio.feedback import play_start_beep, play_stop_beep
 from localwispr.hotkeys import HotkeyListener, HotkeyListenerError, HotkeyMode
 from localwispr.prompts import load_prompt
-from localwispr.transcribe import WhisperTranscriber, transcribe_with_context
+from localwispr.transcribe.transcriber import WhisperTranscriber, transcribe_with_context
 
 
 def record_test(output_file: str | None = None) -> int:

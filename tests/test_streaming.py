@@ -15,7 +15,7 @@ class TestAudioBuffer:
 
     def test_append_and_get_pending(self):
         """Test basic append and get_pending functionality."""
-        from localwispr.streaming import AudioBuffer
+        from localwispr.transcribe.streaming import AudioBuffer
 
         buffer = AudioBuffer()
         buffer.set_source_sample_rate(16000)
@@ -29,7 +29,7 @@ class TestAudioBuffer:
 
     def test_mark_transcribed(self):
         """Test marking audio as transcribed."""
-        from localwispr.streaming import AudioBuffer
+        from localwispr.transcribe.streaming import AudioBuffer
 
         buffer = AudioBuffer()
         buffer.set_source_sample_rate(16000)
@@ -47,7 +47,7 @@ class TestAudioBuffer:
 
     def test_get_full_audio(self):
         """Test getting all buffered audio."""
-        from localwispr.streaming import AudioBuffer
+        from localwispr.transcribe.streaming import AudioBuffer
 
         buffer = AudioBuffer()
         buffer.set_source_sample_rate(16000)
@@ -62,7 +62,7 @@ class TestAudioBuffer:
 
     def test_clear(self):
         """Test clearing the buffer."""
-        from localwispr.streaming import AudioBuffer
+        from localwispr.transcribe.streaming import AudioBuffer
 
         buffer = AudioBuffer()
         buffer.set_source_sample_rate(16000)
@@ -75,7 +75,7 @@ class TestAudioBuffer:
 
     def test_get_pending_duration(self):
         """Test duration calculation."""
-        from localwispr.streaming import AudioBuffer
+        from localwispr.transcribe.streaming import AudioBuffer
 
         buffer = AudioBuffer()
         buffer.set_source_sample_rate(16000)
@@ -88,7 +88,7 @@ class TestAudioBuffer:
 
     def test_max_duration_enforcement(self):
         """Test buffer enforces max duration."""
-        from localwispr.streaming import AudioBuffer
+        from localwispr.transcribe.streaming import AudioBuffer
 
         # Create buffer with 1 second max
         buffer = AudioBuffer(max_duration_seconds=1.0)
@@ -102,7 +102,7 @@ class TestAudioBuffer:
 
     def test_thread_safety(self):
         """Test buffer is thread-safe."""
-        from localwispr.streaming import AudioBuffer
+        from localwispr.transcribe.streaming import AudioBuffer
 
         buffer = AudioBuffer()
         buffer.set_source_sample_rate(16000)
@@ -141,7 +141,7 @@ class TestVADProcessor:
 
     def test_initialization(self):
         """Test VAD processor initialization without loading model."""
-        from localwispr.streaming import VADProcessor
+        from localwispr.transcribe.streaming import VADProcessor
 
         vad = VADProcessor(min_silence_ms=800)
         # Model is lazy-loaded, so just check config
@@ -150,7 +150,7 @@ class TestVADProcessor:
 
     def test_reset(self):
         """Test resetting VAD state."""
-        from localwispr.streaming import VADProcessor
+        from localwispr.transcribe.streaming import VADProcessor
 
         vad = VADProcessor()
         vad._speech_start = 1000
@@ -169,7 +169,7 @@ class TestStreamingConfig:
 
     def test_default_values(self):
         """Test default configuration values."""
-        from localwispr.streaming import StreamingConfig
+        from localwispr.transcribe.streaming import StreamingConfig
 
         config = StreamingConfig()
 
@@ -181,7 +181,7 @@ class TestStreamingConfig:
 
     def test_custom_values(self):
         """Test custom configuration values."""
-        from localwispr.streaming import StreamingConfig
+        from localwispr.transcribe.streaming import StreamingConfig
 
         config = StreamingConfig(
             enabled=True,
@@ -213,7 +213,7 @@ class TestStreamingTranscriber:
     def mock_vad_processor(self, mocker):
         """Mock VADProcessor to avoid torch dependency."""
         # Mock the VADProcessor class itself
-        mock_vad_class = mocker.patch("localwispr.streaming.VADProcessor")
+        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.process.return_value = []  # No segments detected
         mock_vad_instance.reset.return_value = None
@@ -222,7 +222,7 @@ class TestStreamingTranscriber:
 
     def test_initialization(self, mock_transcriber, mock_vad_processor):
         """Test streaming transcriber initialization."""
-        from localwispr.streaming import StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
 
         config = StreamingConfig(enabled=True)
         streamer = StreamingTranscriber(
@@ -235,7 +235,7 @@ class TestStreamingTranscriber:
 
     def test_start_and_finalize(self, mock_transcriber, mock_vad_processor):
         """Test start and finalize lifecycle."""
-        from localwispr.streaming import StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
 
         config = StreamingConfig(enabled=True)
         streamer = StreamingTranscriber(
@@ -261,7 +261,7 @@ class TestStreamingTranscriber:
 
     def test_process_chunk_adds_to_buffer(self, mock_transcriber, mock_vad_processor):
         """Test that process_chunk adds audio to buffer."""
-        from localwispr.streaming import StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
 
         config = StreamingConfig(enabled=True)
         streamer = StreamingTranscriber(
@@ -298,7 +298,7 @@ class TestGetStreamingConfig:
         # Patch where get_config is used (imported into streaming module)
         mocker.patch("localwispr.config.get_config", return_value=mock_config)
 
-        from localwispr.streaming import get_streaming_config
+        from localwispr.transcribe.streaming import get_streaming_config
 
         config = get_streaming_config()
 
@@ -310,7 +310,7 @@ class TestGetStreamingConfig:
         """Test using defaults when config section is missing."""
         mocker.patch("localwispr.config.get_config", return_value={})
 
-        from localwispr.streaming import get_streaming_config
+        from localwispr.transcribe.streaming import get_streaming_config
 
         config = get_streaming_config()
 
@@ -323,7 +323,7 @@ class TestStreamingResult:
 
     def test_creation(self):
         """Test creating a streaming result."""
-        from localwispr.streaming import StreamingResult
+        from localwispr.transcribe.streaming import StreamingResult
 
         result = StreamingResult(
             text="Hello world",
@@ -363,13 +363,13 @@ class TestIncrementalVADProcessing:
     def test_vad_processed_samples_initialized(self, mock_transcriber, mocker):
         """Test that _vad_processed_samples is initialized to 0."""
         # Mock VADProcessor to avoid torch dependency
-        mock_vad_class = mocker.patch("localwispr.streaming.VADProcessor")
+        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.process.return_value = []
         mock_vad_instance.reset.return_value = None
         mock_vad_class.return_value = mock_vad_instance
 
-        from localwispr.streaming import StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
 
         config = StreamingConfig(enabled=True)
         streamer = StreamingTranscriber(
@@ -381,13 +381,13 @@ class TestIncrementalVADProcessing:
 
     def test_vad_processed_samples_reset_on_start(self, mock_transcriber, mocker):
         """Test that _vad_processed_samples is reset when start() is called."""
-        mock_vad_class = mocker.patch("localwispr.streaming.VADProcessor")
+        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.process.return_value = []
         mock_vad_instance.reset.return_value = None
         mock_vad_class.return_value = mock_vad_instance
 
-        from localwispr.streaming import StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
 
         config = StreamingConfig(enabled=True)
         streamer = StreamingTranscriber(
@@ -406,13 +406,13 @@ class TestIncrementalVADProcessing:
 
     def test_vad_only_receives_new_audio(self, mock_transcriber, mocker):
         """Test that VAD.process() only receives new audio, not all pending."""
-        mock_vad_class = mocker.patch("localwispr.streaming.VADProcessor")
+        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.process.return_value = []
         mock_vad_instance.reset.return_value = None
         mock_vad_class.return_value = mock_vad_instance
 
-        from localwispr.streaming import StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
 
         config = StreamingConfig(enabled=True)
         streamer = StreamingTranscriber(
@@ -446,13 +446,13 @@ class TestIncrementalVADProcessing:
 
     def test_vad_tracker_updates_after_each_chunk(self, mock_transcriber, mocker):
         """Test that _vad_processed_samples tracks progress correctly."""
-        mock_vad_class = mocker.patch("localwispr.streaming.VADProcessor")
+        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.process.return_value = []
         mock_vad_instance.reset.return_value = None
         mock_vad_class.return_value = mock_vad_instance
 
-        from localwispr.streaming import StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
 
         config = StreamingConfig(enabled=True)
         streamer = StreamingTranscriber(
@@ -478,13 +478,13 @@ class TestIncrementalVADProcessing:
 
     def test_forced_segment_resets_vad_state(self, mock_transcriber, mocker):
         """Test that forced segments reset VAD state completely."""
-        mock_vad_class = mocker.patch("localwispr.streaming.VADProcessor")
+        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.process.return_value = []
         mock_vad_instance.reset.return_value = None
         mock_vad_class.return_value = mock_vad_instance
 
-        from localwispr.streaming import StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
 
         # Short max_segment_duration to trigger forced split easily
         config = StreamingConfig(
@@ -537,10 +537,10 @@ class TestCoordinateSystemFixes:
 
     def test_vad_segments_translated_to_pending_relative(self, mock_transcriber, mocker):
         """VAD segments with global positions are translated to pending-relative."""
-        from localwispr.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
 
         # Mock VADProcessor to return segment with GLOBAL positions
-        mock_vad_class = mocker.patch("localwispr.streaming.VADProcessor")
+        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.reset.return_value = None
 
@@ -588,9 +588,9 @@ class TestCoordinateSystemFixes:
 
     def test_pending_segments_adjusted_after_transcription(self, mock_transcriber, mocker):
         """Pending segments are adjusted when buffer shifts."""
-        from localwispr.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
 
-        mock_vad_class = mocker.patch("localwispr.streaming.VADProcessor")
+        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.process.return_value = []
         mock_vad_instance.reset.return_value = None
@@ -643,9 +643,9 @@ class TestCoordinateSystemFixes:
 
     def test_segment_bounds_recovery_attempts_salvage(self, mock_transcriber, mocker):
         """Out-of-bounds segments attempt recovery by clamping."""
-        from localwispr.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
 
-        mock_vad_class = mocker.patch("localwispr.streaming.VADProcessor")
+        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.process.return_value = []
         mock_vad_instance.reset.return_value = None
@@ -667,7 +667,7 @@ class TestCoordinateSystemFixes:
         bad_segment = SpeechSegment(start_sample=2000, end_sample=20000, is_final=True)
 
         # Attempt to transcribe - should log warning but recover
-        with patch("localwispr.streaming.logger") as mock_logger:
+        with patch("localwispr.transcribe.streaming.logger") as mock_logger:
             streamer._transcribe_segment(bad_segment)
 
             # Should have logged warning about out of bounds
@@ -682,9 +682,9 @@ class TestCoordinateSystemFixes:
 
     def test_buffer_wraparound_detection_resets_vad(self, mock_transcriber, mocker):
         """Wraparound (>5min recording) is detected and handled."""
-        from localwispr.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
 
-        mock_vad_class = mocker.patch("localwispr.streaming.VADProcessor")
+        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.process.return_value = []
         mock_vad_instance.reset.return_value = None
@@ -711,7 +711,7 @@ class TestCoordinateSystemFixes:
             )
 
         # Process chunk - should detect wraparound
-        with patch("localwispr.streaming.logger") as mock_logger:
+        with patch("localwispr.transcribe.streaming.logger") as mock_logger:
             chunk = np.zeros(1600, dtype=np.float32)
             streamer.process_chunk(chunk)
 
@@ -735,7 +735,7 @@ class TestCoordinateSystemFixes:
 
     def test_streaming_multi_segment_end_to_end(self, mock_transcriber, mocker):
         """Full integration: Multiple VAD segments transcribe correctly."""
-        from localwispr.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
+        from localwispr.transcribe.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
 
         # Track transcription calls
         transcription_calls = []
@@ -752,7 +752,7 @@ class TestCoordinateSystemFixes:
         mock_transcriber.transcribe.side_effect = mock_transcribe
 
         # Mock VAD to return segments at specific times
-        mock_vad_class = mocker.patch("localwispr.streaming.VADProcessor")
+        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.reset.return_value = None
 
@@ -811,7 +811,7 @@ class TestCoordinateSystemFixes:
         Edge case: mark_transcribed(samples) called with samples > current buffer size.
         Should handle gracefully without negative buffer calculations or crashes.
         """
-        from localwispr.streaming import AudioBuffer
+        from localwispr.transcribe.streaming import AudioBuffer
 
         buffer = AudioBuffer()
         buffer.set_source_sample_rate(16000)

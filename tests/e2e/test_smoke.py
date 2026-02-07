@@ -22,14 +22,14 @@ class TestApplicationSmoke:
         - No exceptions during startup
         """
         # Mock OverlayWidget
-        mocker.patch("localwispr.overlay.OverlayWidget")
+        mocker.patch("localwispr.ui.overlay.OverlayWidget")
 
         # Reset settings manager
-        import localwispr.settings_manager as sm_module
+        import localwispr.settings.manager as sm_module
         sm_module._settings_manager = None
 
         # Create TrayApp (should not crash)
-        from localwispr.tray import TrayApp
+        from localwispr.ui.tray import TrayApp
         app = TrayApp()
 
         # Verify components exist and are functional (not just not None)
@@ -47,7 +47,7 @@ class TestApplicationSmoke:
 
         # Verify settings manager has registered handlers
         manager = sm_module.get_settings_manager()
-        from localwispr.settings_manager import InvalidationFlags
+        from localwispr.settings.manager import InvalidationFlags
 
         # Should have handlers for each flag
         assert InvalidationFlags.HOTKEY_LISTENER in manager._handlers
@@ -69,14 +69,14 @@ class TestApplicationSmoke:
         (transcription correctness is tested elsewhere).
         """
         # Mock OverlayWidget
-        mocker.patch("localwispr.overlay.OverlayWidget")
+        mocker.patch("localwispr.ui.overlay.OverlayWidget")
 
         # Reset settings manager
-        import localwispr.settings_manager as sm_module
+        import localwispr.settings.manager as sm_module
         sm_module._settings_manager = None
 
         # Create TrayApp
-        from localwispr.tray import TrayApp
+        from localwispr.ui.tray import TrayApp
         app = TrayApp()
 
         # Start recording
@@ -108,10 +108,10 @@ class TestApplicationSmoke:
         config_path = full_app_context["config_path"]
 
         # Mock OverlayWidget
-        mocker.patch("localwispr.overlay.OverlayWidget")
+        mocker.patch("localwispr.ui.overlay.OverlayWidget")
 
         # Reset settings manager
-        import localwispr.settings_manager as sm_module
+        import localwispr.settings.manager as sm_module
         sm_module._settings_manager = None
 
         # Spy before creating app
@@ -119,7 +119,7 @@ class TestApplicationSmoke:
         invalidate_spy = mocker.spy(RecordingPipeline, "invalidate_transcriber")
 
         # Create TrayApp
-        from localwispr.tray import TrayApp
+        from localwispr.ui.tray import TrayApp
         app = TrayApp()
 
         # Get initial config
@@ -158,14 +158,14 @@ class TestApplicationSmoke:
         - No crashes
         """
         # Mock OverlayWidget
-        mocker.patch("localwispr.overlay.OverlayWidget")
+        mocker.patch("localwispr.ui.overlay.OverlayWidget")
 
         # Reset mode manager
         import localwispr.modes.manager as manager_module
         manager_module._mode_manager = None
 
         # Create TrayApp
-        from localwispr.tray import TrayApp
+        from localwispr.ui.tray import TrayApp
         app = TrayApp()
 
         # Get initial mode

@@ -180,7 +180,7 @@ class TestAudioRecorder:
 
         # Mock prepare_for_whisper
         mock_prepare = mocker.patch(
-            "localwispr.audio.prepare_for_whisper",
+            "localwispr.audio.format.prepare_for_whisper",
             return_value=np.zeros(16000, dtype=np.float32),
         )
 

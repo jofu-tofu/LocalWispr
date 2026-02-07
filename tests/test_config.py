@@ -34,8 +34,8 @@ name = "tiny"
         # Custom value
         assert config["model"]["name"] == "tiny"
         # Default values filled in
-        assert config["model"]["device"] == "cuda"
-        assert config["model"]["compute_type"] == "float16"
+        assert config["model"]["device"] == "auto"
+        assert config["model"]["compute_type"] == "auto"
 
     def test_load_config_full_file(self, mock_config_file):
         """Test loading a complete config file."""
@@ -162,11 +162,11 @@ class TestGetConfig:
         clear_config_cache()
 
         mocker.patch(
-            "localwispr.config._get_defaults_path",
+            "localwispr.config.loader._get_defaults_path",
             return_value=mock_config_file,
         )
         mocker.patch(
-            "localwispr.config._get_appdata_config_path",
+            "localwispr.config.loader._get_appdata_config_path",
             return_value=mock_config_file.parent / "user-settings.toml",
         )
 
@@ -187,11 +187,11 @@ class TestGetConfig:
         clear_config_cache()
 
         mocker.patch(
-            "localwispr.config._get_defaults_path",
+            "localwispr.config.loader._get_defaults_path",
             return_value=mock_config_file,
         )
         mocker.patch(
-            "localwispr.config._get_appdata_config_path",
+            "localwispr.config.loader._get_appdata_config_path",
             return_value=mock_config_file.parent / "user-settings.toml",
         )
 
@@ -228,11 +228,11 @@ name = "tiny"
         clear_config_cache()
 
         mocker.patch(
-            "localwispr.config._get_defaults_path",
+            "localwispr.config.loader._get_defaults_path",
             return_value=tmp_path / "config-defaults.toml",
         )
         mocker.patch(
-            "localwispr.config._get_appdata_config_path",
+            "localwispr.config.loader._get_appdata_config_path",
             return_value=user_path,
         )
 
@@ -256,14 +256,14 @@ class TestClearConfigCache:
 
     def test_clear_config_cache(self, mocker, mock_config_file):
         """Test that clear_config_cache resets the cache."""
-        import localwispr.config as config_module
+        from localwispr.config import cache as config_cache_module
 
         mocker.patch(
-            "localwispr.config._get_defaults_path",
+            "localwispr.config.loader._get_defaults_path",
             return_value=mock_config_file,
         )
         mocker.patch(
-            "localwispr.config._get_appdata_config_path",
+            "localwispr.config.loader._get_appdata_config_path",
             return_value=mock_config_file.parent / "user-settings.toml",
         )
 
@@ -275,7 +275,7 @@ class TestClearConfigCache:
         clear_config_cache()
 
         # Cache should be cleared
-        assert config_module._cached_config is None
+        assert config_cache_module._cached_config is None
 
         config2 = get_config()
 
@@ -293,9 +293,9 @@ class TestConfigThreadSafety:
         import threading
         from localwispr.config import get_config
 
-        mocker.patch("localwispr.config._get_defaults_path",
+        mocker.patch("localwispr.config.loader._get_defaults_path",
                      return_value=mock_config_file)
-        mocker.patch("localwispr.config._get_appdata_config_path",
+        mocker.patch("localwispr.config.loader._get_appdata_config_path",
                      return_value=mock_config_file.parent / "user.toml")
 
         results = []
@@ -334,9 +334,9 @@ class TestConfigThreadSafety:
         config_file = tmp_path / "config-defaults.toml"
         config_file.write_text('[model]\nname = "tiny"\ndevice = "cpu"')
 
-        mocker.patch("localwispr.config._get_defaults_path",
+        mocker.patch("localwispr.config.loader._get_defaults_path",
                      return_value=config_file)
-        mocker.patch("localwispr.config._get_appdata_config_path",
+        mocker.patch("localwispr.config.loader._get_appdata_config_path",
                      return_value=tmp_path / "user.toml")
 
         results = []
@@ -473,8 +473,8 @@ name = "large-v3"
 words = ["custom1", "custom2", "custom3"]
 """)
 
-        mocker.patch("localwispr.config._get_defaults_path", return_value=defaults_path)
-        mocker.patch("localwispr.config._get_appdata_config_path", return_value=user_path)
+        mocker.patch("localwispr.config.loader._get_defaults_path", return_value=defaults_path)
+        mocker.patch("localwispr.config.loader._get_appdata_config_path", return_value=user_path)
 
         from localwispr.config import load_config
 
@@ -491,7 +491,7 @@ words = ["custom1", "custom2", "custom3"]
         """Test that save_config creates AppData directory if missing."""
         user_path = tmp_path / "LocalWispr" / "Stable" / "user-settings.toml"
 
-        mocker.patch("localwispr.config._get_appdata_config_path", return_value=user_path)
+        mocker.patch("localwispr.config.saver._get_appdata_config_path", return_value=user_path)
 
         from localwispr.config import save_config
 
@@ -531,9 +531,9 @@ name = "large-v3"
 device = "cuda"
 ''')
 
-        mocker.patch("localwispr.config._get_defaults_path",
+        mocker.patch("localwispr.config.loader._get_defaults_path",
                      return_value=defaults_path)
-        mocker.patch("localwispr.config._get_appdata_config_path",
+        mocker.patch("localwispr.config.loader._get_appdata_config_path",
                      return_value=user_path)
 
         # Initial load
@@ -588,8 +588,8 @@ words = ["migrated1", "migrated2"]
         # AppData path for user settings
         user_path = tmp_path / "AppData" / "LocalWispr" / "Stable" / "user-settings.toml"
 
-        mocker.patch("localwispr.config._get_appdata_config_path", return_value=user_path)
-        mocker.patch("localwispr.config._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
+        mocker.patch("localwispr.config.loader._get_appdata_config_path", return_value=user_path)
+        mocker.patch("localwispr.config.loader._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
 
         from localwispr.config import load_config
 
@@ -625,8 +625,8 @@ name = "tiny"
 name = "large-v3"
 """)
 
-        mocker.patch("localwispr.config._get_appdata_config_path", return_value=user_path)
-        mocker.patch("localwispr.config._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
+        mocker.patch("localwispr.config.loader._get_appdata_config_path", return_value=user_path)
+        mocker.patch("localwispr.config.loader._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
 
         from localwispr.config import load_config
 
@@ -652,8 +652,8 @@ name = "tiny"
         # Make user path unwritable (simulate permission error)
         user_path = tmp_path / "AppData" / "LocalWispr" / "Stable" / "user-settings.toml"
 
-        mocker.patch("localwispr.config._get_appdata_config_path", return_value=user_path)
-        mocker.patch("localwispr.config._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
+        mocker.patch("localwispr.config.loader._get_appdata_config_path", return_value=user_path)
+        mocker.patch("localwispr.config.loader._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
 
         # Mock mkdir to raise permission error
         mocker.patch("pathlib.Path.mkdir", side_effect=PermissionError("Access denied"))
