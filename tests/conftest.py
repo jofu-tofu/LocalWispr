@@ -144,6 +144,16 @@ def mock_config() -> dict[str, Any]:
         "vocabulary": {
             "words": ["LocalWispr", "pytest"],
         },
+        "streaming": {
+            "enabled": False,
+            "min_silence_ms": 800,
+            "max_segment_duration": 20.0,
+            "min_segment_duration": 2.0,
+            "overlap_ms": 100,
+            "context_check_interval": 3,
+            "context_lock_threshold": 4,
+            "context_word_threshold": 50,
+        },
     }
 
 
@@ -261,6 +271,28 @@ def sync_executor():
 
 
 @pytest.fixture
+def models_in_tmp(tmp_path, mocker):
+    """Point model directory to tmp_path for controlled file system.
+
+    Usage:
+        models_in_tmp()  # model NOT downloaded (empty dir)
+        models_in_tmp("tiny")  # create dummy model file
+    """
+    mocker.patch(
+        "localwispr.transcribe.model_manager.get_models_dir",
+        return_value=tmp_path,
+    )
+
+    def _create_model(model_name=None):
+        if model_name:
+            from localwispr.transcribe.model_manager import get_model_filename
+
+            (tmp_path / get_model_filename(model_name)).write_bytes(b"fake model")
+
+    return _create_model
+
+
+@pytest.fixture
 def mock_model_downloaded(mocker):
     """Mock is_model_downloaded to return True.
 
@@ -289,6 +321,7 @@ def mock_audio_recorder(mocker):
     The mock handles recording state automatically:
     - start_recording() sets is_recording = True
     - stop_recording() sets is_recording = False and returns audio
+    - get_whisper_audio() returns audio data
 
     Returns:
         MagicMock configured as AudioRecorder with common test behaviors.
@@ -297,20 +330,16 @@ def mock_audio_recorder(mocker):
     mock_recorder.is_recording = False
     mock_recorder.sample_rate = 16000
 
-    # Store audio chunks
-    mock_recorder._audio_buffer = []
-
     def start_recording_side_effect():
         mock_recorder.is_recording = True
 
     def stop_recording_side_effect():
         mock_recorder.is_recording = False
-        if mock_recorder._audio_buffer:
-            return np.concatenate(mock_recorder._audio_buffer)
         return np.zeros(16000, dtype=np.float32)
 
     def get_whisper_audio_side_effect():
-        return stop_recording_side_effect()
+        mock_recorder.is_recording = False
+        return np.zeros(16000, dtype=np.float32)
 
     mock_recorder.start_recording.side_effect = start_recording_side_effect
     mock_recorder.stop_recording.side_effect = stop_recording_side_effect
@@ -330,6 +359,10 @@ def mock_whisper_transcriber(mocker):
 
     Also mocks is_model_downloaded to return True, since tests using
     this fixture expect the model to be available for transcription.
+
+    NOTE: For behavior-focused tests, prefer using the `models_in_tmp` fixture
+    with a real WhisperTranscriber and mocked pywhispercpp.model.Model instead.
+    See integration/test_workflows.py for examples of this pattern.
 
     Returns:
         MagicMock configured as WhisperTranscriber with test transcription.

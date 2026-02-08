@@ -152,6 +152,18 @@ class RecordingPipeline:
         """
         return self._model_preload_complete.is_set() and self._model_preload_error is None
 
+    @property
+    def model_preload_state(self) -> str:
+        """Get model preload state: 'ready', 'loading', 'not_downloaded', or 'error'."""
+        if self._model_preload_complete.is_set():
+            if self._model_preload_error is None:
+                return "ready"
+            elif isinstance(self._model_preload_error, ModelNotDownloadedError):
+                return "not_downloaded"
+            else:
+                return "error"
+        return "loading"
+
     def preload_model_async(self) -> None:
         """Start loading the Whisper model in a background thread.
 
@@ -797,11 +809,12 @@ class RecordingPipeline:
             if self._transcriber is not None:
                 return self._transcriber.model_name
 
-        # Check if model is still loading
         if not self._model_preload_complete.is_set():
             return "Loading..."
-
-        # Preload failed, will load synchronously on first transcription
+        if isinstance(self._model_preload_error, ModelNotDownloadedError):
+            return "Not downloaded"
+        if self._model_preload_error is not None:
+            return "Load failed"
         return "Initializing..."
 
     def invalidate_transcriber(self) -> None:

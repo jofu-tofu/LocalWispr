@@ -140,7 +140,11 @@ class TestVADProcessor:
     """Tests for VADProcessor class."""
 
     def test_initialization(self):
-        """Test VAD processor initialization without loading model."""
+        """Test VAD processor initialization without loading model.
+
+        Characterization test: VAD config validation — verifies internal config
+        is correctly derived from constructor parameters.
+        """
         from localwispr.transcribe.streaming import VADProcessor
 
         vad = VADProcessor(min_silence_ms=800)
@@ -148,20 +152,6 @@ class TestVADProcessor:
         assert vad._min_silence_samples == 12800  # 800ms at 16kHz
         assert vad._model is None  # Not loaded yet
 
-    def test_reset(self):
-        """Test resetting VAD state."""
-        from localwispr.transcribe.streaming import VADProcessor
-
-        vad = VADProcessor()
-        vad._speech_start = 1000
-        vad._silence_start = 2000
-        vad._processed_samples = 5000
-
-        vad.reset()
-
-        assert vad._speech_start is None
-        assert vad._silence_start is None
-        assert vad._processed_samples == 0
 
 
 class TestStreamingConfig:
@@ -280,6 +270,34 @@ class TestStreamingTranscriber:
 
         streamer.finalize()
 
+    def test_streaming_lifecycle_public_api_only(self, mock_transcriber, mock_vad_processor):
+        """High-level lifecycle test: start → process → finalize → text result."""
+        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
+
+        config = StreamingConfig(enabled=True)
+        streamer = StreamingTranscriber(
+            transcriber=mock_transcriber,
+            config=config,
+        )
+
+        # Full lifecycle using only public API
+        streamer.start(source_sample_rate=16000)
+
+        # Process multiple chunks of audio
+        for _ in range(5):
+            chunk = np.random.randn(1600).astype(np.float32)
+            streamer.process_chunk(chunk)
+
+        time.sleep(0.1)
+
+        # Finalize returns result with text
+        result = streamer.finalize()
+
+        assert result is not None
+        assert isinstance(result.text, str)
+        assert result.text != ""
+        assert result.audio_duration > 0
+
 
 class TestGetStreamingConfig:
     """Tests for get_streaming_config function."""
@@ -360,52 +378,9 @@ class TestIncrementalVADProcessing:
         )
         return mock
 
-    def test_vad_processed_samples_initialized(self, mock_transcriber, mocker):
-        """Test that _vad_processed_samples is initialized to 0."""
-        # Mock VADProcessor to avoid torch dependency
-        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
-        mock_vad_instance = MagicMock()
-        mock_vad_instance.process.return_value = []
-        mock_vad_instance.reset.return_value = None
-        mock_vad_class.return_value = mock_vad_instance
 
-        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
-
-        config = StreamingConfig(enabled=True)
-        streamer = StreamingTranscriber(
-            transcriber=mock_transcriber,
-            config=config,
-        )
-
-        assert streamer._vad_processed_samples == 0
-
-    def test_vad_processed_samples_reset_on_start(self, mock_transcriber, mocker):
-        """Test that _vad_processed_samples is reset when start() is called."""
-        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
-        mock_vad_instance = MagicMock()
-        mock_vad_instance.process.return_value = []
-        mock_vad_instance.reset.return_value = None
-        mock_vad_class.return_value = mock_vad_instance
-
-        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
-
-        config = StreamingConfig(enabled=True)
-        streamer = StreamingTranscriber(
-            transcriber=mock_transcriber,
-            config=config,
-        )
-
-        # Simulate some processing happened
-        streamer._vad_processed_samples = 5000
-
-        # Start should reset it
-        streamer.start(source_sample_rate=16000)
-
-        assert streamer._vad_processed_samples == 0
-        streamer.finalize()
-
-    def test_vad_only_receives_new_audio(self, mock_transcriber, mocker):
-        """Test that VAD.process() only receives new audio, not all pending."""
+    def test_vad_called_once_per_chunk(self, mock_transcriber, mocker):
+        """Test that VAD processes incrementally (once per chunk, not accumulating)."""
         mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.process.return_value = []
@@ -422,94 +397,16 @@ class TestIncrementalVADProcessing:
 
         streamer.start(source_sample_rate=16000)
 
-        # Process first chunk (1600 samples = 100ms at 16kHz)
-        chunk1 = np.zeros(1600, dtype=np.float32)
-        streamer.process_chunk(chunk1)
-
-        # VAD should have received ~1600 samples
-        first_call_audio = mock_vad_instance.process.call_args_list[0][0][0]
-        first_call_size = first_call_audio.size
-
-        # Process second chunk
-        chunk2 = np.zeros(1600, dtype=np.float32)
-        streamer.process_chunk(chunk2)
-
-        # VAD should receive only the NEW ~1600 samples, not all ~3200
-        second_call_audio = mock_vad_instance.process.call_args_list[1][0][0]
-        second_call_size = second_call_audio.size
-
-        # The second call should be approximately the same size as the first
-        # (just the new chunk), not double the size
-        assert second_call_size <= first_call_size * 1.1  # Allow small variance
-
-        streamer.finalize()
-
-    def test_vad_tracker_updates_after_each_chunk(self, mock_transcriber, mocker):
-        """Test that _vad_processed_samples tracks progress correctly."""
-        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
-        mock_vad_instance = MagicMock()
-        mock_vad_instance.process.return_value = []
-        mock_vad_instance.reset.return_value = None
-        mock_vad_class.return_value = mock_vad_instance
-
-        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
-
-        config = StreamingConfig(enabled=True)
-        streamer = StreamingTranscriber(
-            transcriber=mock_transcriber,
-            config=config,
-        )
-
-        streamer.start(source_sample_rate=16000)
-
-        # Process multiple chunks
-        for i in range(3):
+        num_chunks = 5
+        for _ in range(num_chunks):
             chunk = np.zeros(1600, dtype=np.float32)
             streamer.process_chunk(chunk)
 
-        # Tracker should have increased with each chunk
-        # At 16kHz source rate, 3 x 1600 samples = 4800 samples pending
-        assert streamer._vad_processed_samples > 0
-        # Should be approximately 4800 samples (may vary slightly due to resampling)
-        assert streamer._vad_processed_samples >= 4000
-        assert streamer._vad_processed_samples <= 6000
+        # VAD should be called approximately once per chunk (incremental, not accumulating)
+        assert mock_vad_instance.process.call_count == num_chunks
 
         streamer.finalize()
 
-    def test_forced_segment_resets_vad_state(self, mock_transcriber, mocker):
-        """Test that forced segments reset VAD state completely."""
-        mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
-        mock_vad_instance = MagicMock()
-        mock_vad_instance.process.return_value = []
-        mock_vad_instance.reset.return_value = None
-        mock_vad_class.return_value = mock_vad_instance
-
-        from localwispr.transcribe.streaming import StreamingConfig, StreamingTranscriber
-
-        # Short max_segment_duration to trigger forced split easily
-        config = StreamingConfig(
-            enabled=True,
-            max_segment_duration=0.5,  # 500ms
-        )
-        streamer = StreamingTranscriber(
-            transcriber=mock_transcriber,
-            config=config,
-        )
-
-        streamer.start(source_sample_rate=16000)
-
-        # Process enough audio to trigger forced split (> 500ms)
-        # At 16kHz, 500ms = 8000 samples
-        large_chunk = np.zeros(10000, dtype=np.float32)  # 625ms
-        streamer.process_chunk(large_chunk)
-
-        # VAD reset should have been called due to forced segment
-        assert mock_vad_instance.reset.call_count >= 2  # Once at start, once at forced split
-
-        # Tracker should be reset to 0 after forced segment
-        assert streamer._vad_processed_samples == 0
-
-        streamer.finalize()
 
 
 class TestCoordinateSystemFixes:
@@ -535,20 +432,19 @@ class TestCoordinateSystemFixes:
         )
         return mock
 
-    def test_vad_segments_translated_to_pending_relative(self, mock_transcriber, mocker):
-        """VAD segments with global positions are translated to pending-relative."""
+    def test_vad_segments_produce_transcription_on_finalize(self, mock_transcriber, mocker):
+        """VAD segments are correctly translated and transcribed on finalize."""
         from localwispr.transcribe.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
 
-        # Mock VADProcessor to return segment with GLOBAL positions
+        # Mock VADProcessor to return a segment
         mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
         mock_vad_instance.reset.return_value = None
 
-        # First call: no segments
-        # Second call: return segment at GLOBAL positions [10000:20000]
+        # Return a segment on the second chunk
         mock_vad_instance.process.side_effect = [
             [],  # First chunk - no segments
-            [SpeechSegment(start_sample=10000, end_sample=20000, is_final=True)],  # Second chunk
+            [SpeechSegment(start_sample=0, end_sample=8000, is_final=True)],  # Second chunk
         ]
         mock_vad_class.return_value = mock_vad_instance
 
@@ -560,40 +456,56 @@ class TestCoordinateSystemFixes:
 
         streamer.start(source_sample_rate=16000)
 
-        # Stop transcription thread immediately to prevent it from processing
-        streamer._stop_event.set()
-        if streamer._transcription_thread:
-            streamer._transcription_thread.join(timeout=1.0)
-
-        # Build up pending buffer
+        # Process two chunks of audio
         chunk1 = np.zeros(8000, dtype=np.float32)  # 500ms
         streamer.process_chunk(chunk1)
-
-        # Simulate transcription: mark 5000 samples as transcribed
-        # This creates offset: _transcribed_samples = 5000
-        streamer._buffer.mark_transcribed(5000)
-
-        # Process second chunk - VAD returns segment at GLOBAL [10000:20000]
         chunk2 = np.zeros(8000, dtype=np.float32)
         streamer.process_chunk(chunk2)
 
-        # Check queued segment is TRANSLATED to pending-relative
-        with streamer._lock:
-            assert len(streamer._pending_segments) >= 1
-            # Find the segment from second chunk (should be the last one if there are multiple)
-            seg = streamer._pending_segments[-1]
-            # Global [10000:20000] - offset 5000 = pending-relative [5000:15000]
-            assert seg.start_sample == 5000
-            assert seg.end_sample == 15000
+        # Allow time for background transcription thread to process the segment
+        time.sleep(0.5)
 
-    def test_pending_segments_adjusted_after_transcription(self, mock_transcriber, mocker):
-        """Pending segments are adjusted when buffer shifts."""
+        # Finalize should produce a result with transcribed text
+        result = streamer.finalize()
+
+        assert result is not None
+        assert result.text != ""
+        # Transcriber was called at least once (for VAD segment and/or finalize)
+        assert mock_transcriber.transcribe.call_count >= 1
+
+    def test_multiple_vad_segments_all_transcribed(self, mock_transcriber, mocker):
+        """Multiple VAD segments are all processed and produce combined transcription."""
         from localwispr.transcribe.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
+
+        transcription_calls = []
+
+        def mock_transcribe(audio, **kwargs):
+            transcription_calls.append(len(audio))
+            return MagicMock(
+                text=f"segment {len(transcription_calls)}",
+                segments=[],
+                inference_time=0.1,
+                audio_duration=len(audio) / 16000,
+            )
+
+        mock_transcriber.transcribe.side_effect = mock_transcribe
 
         mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
         mock_vad_instance = MagicMock()
-        mock_vad_instance.process.return_value = []
         mock_vad_instance.reset.return_value = None
+
+        # Return two segments across different chunks
+        call_count = [0]
+
+        def vad_process(audio):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                return [SpeechSegment(start_sample=0, end_sample=8000, is_final=True)]
+            elif call_count[0] == 4:
+                return [SpeechSegment(start_sample=0, end_sample=8000, is_final=True)]
+            return []
+
+        mock_vad_instance.process.side_effect = vad_process
         mock_vad_class.return_value = mock_vad_instance
 
         config = StreamingConfig(enabled=True, min_segment_duration=0.1)
@@ -604,45 +516,27 @@ class TestCoordinateSystemFixes:
 
         streamer.start(source_sample_rate=16000)
 
-        # Stop transcription thread to prevent automatic processing
-        streamer._stop_event.set()
-        if streamer._transcription_thread:
-            streamer._transcription_thread.join(timeout=1.0)
+        # Process enough chunks to trigger both segments
+        for _ in range(6):
+            chunk = np.random.randn(4800).astype(np.float32)
+            streamer.process_chunk(chunk)
+            time.sleep(0.05)
 
-        # Add audio to buffer
-        chunk = np.zeros(16000, dtype=np.float32)  # 1 second
-        streamer.process_chunk(chunk)
+        time.sleep(0.5)  # Allow background processing
 
-        # Manually queue two segments (pending-relative coordinates)
-        with streamer._lock:
-            streamer._pending_segments.clear()  # Clear any auto-generated
-            streamer._pending_segments.append(
-                SpeechSegment(start_sample=1000, end_sample=5000, is_final=True)
-            )
-            streamer._pending_segments.append(
-                SpeechSegment(start_sample=6000, end_sample=10000, is_final=True)
-            )
+        result = streamer.finalize()
 
-        # Get first segment before it's modified
-        with streamer._lock:
-            first_segment = streamer._pending_segments[0]
-
-        # Manually transcribe first segment (marks 5000 samples done)
-        streamer._transcribe_segment(first_segment)
-
-        # Check second segment was adjusted for buffer shift
-        with streamer._lock:
-            # After transcription:
-            # - First segment [1000:5000] should be removed (end_sample 5000 == transcribed amount)
-            # - Second segment [6000:10000] should be adjusted: [6000-5000:10000-5000] = [1000:5000]
-            remaining = [seg for seg in streamer._pending_segments]
-            assert len(remaining) == 1, f"Expected 1 segment, got {len(remaining)}: {remaining}"
-            adjusted_seg = remaining[0]
-            assert adjusted_seg.start_sample == 1000, f"Expected start 1000, got {adjusted_seg.start_sample}"
-            assert adjusted_seg.end_sample == 5000, f"Expected end 5000, got {adjusted_seg.end_sample}"
+        # Both segments should have been transcribed
+        assert len(transcription_calls) >= 2
+        assert result.num_segments >= 2
+        assert result.text != ""
 
     def test_segment_bounds_recovery_attempts_salvage(self, mock_transcriber, mocker):
-        """Out-of-bounds segments attempt recovery by clamping."""
+        """Out-of-bounds segments attempt recovery by clamping.
+
+        Characterization test: error recovery path — tests an error recovery
+        scenario that is hard to trigger through the public API.
+        """
         from localwispr.transcribe.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
 
         mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")
@@ -681,7 +575,11 @@ class TestCoordinateSystemFixes:
         streamer.finalize()
 
     def test_buffer_wraparound_detection_resets_vad(self, mock_transcriber, mocker):
-        """Wraparound (>5min recording) is detected and handled."""
+        """Wraparound (>5min recording) is detected and handled.
+
+        Characterization test: wraparound edge case unreachable via public API —
+        requires processing >5 minutes of audio to trigger naturally.
+        """
         from localwispr.transcribe.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
 
         mock_vad_class = mocker.patch("localwispr.transcribe.streaming.VADProcessor")

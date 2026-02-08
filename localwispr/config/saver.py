@@ -83,6 +83,25 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
         lines.append(f"words = [{vocab_str}]")
         lines.append("")
 
+    # Context section
+    context = config.get("context", {})
+    if context:
+        lines.append("[context]")
+        lines.append("# Applications and keywords for context detection")
+        coding_apps = context.get("coding_apps", [])
+        coding_apps_str = ", ".join(f'"{a}"' for a in coding_apps)
+        lines.append(f"coding_apps = [{coding_apps_str}]")
+        planning_apps = context.get("planning_apps", [])
+        planning_apps_str = ", ".join(f'"{a}"' for a in planning_apps)
+        lines.append(f"planning_apps = [{planning_apps_str}]")
+        coding_keywords = context.get("coding_keywords", [])
+        coding_keywords_str = ", ".join(f'"{k}"' for k in coding_keywords)
+        lines.append(f"coding_keywords = [{coding_keywords_str}]")
+        planning_keywords = context.get("planning_keywords", [])
+        planning_keywords_str = ", ".join(f'"{k}"' for k in planning_keywords)
+        lines.append(f"planning_keywords = [{planning_keywords_str}]")
+        lines.append("")
+
     # Streaming section
     streaming = config.get("streaming", {})
     lines.append("[streaming]")
@@ -103,6 +122,15 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     lines.append("")
     lines.append("# Audio overlap between segments (ms) for better context")
     lines.append(f"overlap_ms = {streaming.get('overlap_ms', 100)}")
+    lines.append("")
+    lines.append("# Seconds between context detection checks during streaming")
+    lines.append(f"context_check_interval = {streaming.get('context_check_interval', 3)}")
+    lines.append("")
+    lines.append("# Consecutive same-context checks before locking context")
+    lines.append(f"context_lock_threshold = {streaming.get('context_lock_threshold', 4)}")
+    lines.append("")
+    lines.append("# Minimum words transcribed before context detection runs")
+    lines.append(f"context_word_threshold = {streaming.get('context_word_threshold', 50)}")
     lines.append("")
 
     # Write to file

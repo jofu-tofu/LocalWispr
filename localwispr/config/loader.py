@@ -114,5 +114,13 @@ def load_config(config_path: Path | None = None) -> Config:
             logger.info("load_config: loaded user overrides from %s", user_path)
         except Exception as e:
             logger.warning("load_config: failed to load user overrides (using defaults): %s", e)
+    else:
+        # Bootstrap: persist merged config if no user settings exist yet
+        try:
+            from localwispr.config.saver import save_config
+            save_config(config, user_path)
+            logger.info("load_config: bootstrapped user-settings.toml at %s", user_path)
+        except Exception as e:
+            logger.warning("load_config: bootstrap save failed (non-fatal): %s", e)
 
     return config

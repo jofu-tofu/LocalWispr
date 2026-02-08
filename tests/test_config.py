@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import tomllib
+
 
 
 
@@ -663,3 +665,183 @@ name = "tiny"
         # Should not crash, just use defaults
         config = load_config()
         assert config is not None
+
+
+class TestBootstrap:
+    """Tests for auto-bootstrap of user-settings.toml."""
+
+    def test_bootstrap_creates_user_settings_on_first_run(self, tmp_path, mocker):
+        """Test that load_config creates user-settings.toml when it doesn't exist."""
+        defaults_path = tmp_path / "config-defaults.toml"
+        defaults_path.write_text("""
+[model]
+name = "large-v3"
+device = "cuda"
+""")
+
+        user_path = tmp_path / "LocalWispr" / "Test" / "user-settings.toml"
+
+        mocker.patch("localwispr.config.loader._get_defaults_path", return_value=defaults_path)
+        mocker.patch("localwispr.config.loader._get_appdata_config_path", return_value=user_path)
+
+        from localwispr.config import load_config
+
+        config = load_config()
+
+        # user-settings.toml should have been created
+        assert user_path.exists()
+        # Config should contain the merged values
+        assert config["model"]["name"] == "large-v3"
+        assert config["model"]["device"] == "cuda"
+
+    def test_bootstrap_skipped_when_user_settings_exist(self, tmp_path, mocker):
+        """Test that bootstrap does not overwrite existing user-settings.toml."""
+        defaults_path = tmp_path / "config-defaults.toml"
+        defaults_path.write_text("""
+[model]
+name = "base"
+""")
+
+        user_path = tmp_path / "LocalWispr" / "Test" / "user-settings.toml"
+        user_path.parent.mkdir(parents=True)
+        user_path.write_text("""
+[model]
+name = "large-v3"
+device = "cuda"
+""")
+
+        # Record original content
+        original_content = user_path.read_text()
+
+        mocker.patch("localwispr.config.loader._get_defaults_path", return_value=defaults_path)
+        mocker.patch("localwispr.config.loader._get_appdata_config_path", return_value=user_path)
+
+        from localwispr.config import load_config
+
+        config = load_config()
+
+        # File should not have been overwritten
+        assert user_path.read_text() == original_content
+        # User override should win
+        assert config["model"]["name"] == "large-v3"
+
+    def test_bootstrap_skipped_for_explicit_path(self, tmp_path, mocker):
+        """Test that bootstrap doesn't fire when config_path argument is passed."""
+        config_path = tmp_path / "explicit-config.toml"
+        config_path.write_text("""
+[model]
+name = "tiny"
+""")
+
+        # Spy on save_config to verify it's never called
+        mock_save = mocker.patch("localwispr.config.saver.save_config")
+
+        from localwispr.config import load_config
+
+        config = load_config(config_path)
+
+        # save_config should NOT have been called (explicit path = no bootstrap)
+        mock_save.assert_not_called()
+        assert config["model"]["name"] == "tiny"
+
+    def test_bootstrap_failure_is_nonfatal(self, tmp_path, mocker):
+        """Test that bootstrap save failure doesn't crash load_config."""
+        defaults_path = tmp_path / "config-defaults.toml"
+        defaults_path.write_text("""
+[model]
+name = "large-v3"
+""")
+
+        user_path = tmp_path / "LocalWispr" / "Test" / "user-settings.toml"
+
+        mocker.patch("localwispr.config.loader._get_defaults_path", return_value=defaults_path)
+        mocker.patch("localwispr.config.loader._get_appdata_config_path", return_value=user_path)
+        mocker.patch("localwispr.config.saver.save_config", side_effect=PermissionError("Access denied"))
+
+        from localwispr.config import load_config
+
+        # Should not crash — returns valid config
+        config = load_config()
+        assert config is not None
+        assert config["model"]["name"] == "large-v3"
+
+
+class TestSaveConfigSections:
+    """Tests for save_config section completeness."""
+
+    def test_save_config_includes_context_section(self, tmp_path, mock_config):
+        """Test that save_config serializes the [context] section."""
+        config_path = tmp_path / "config.toml"
+
+        from localwispr.config import save_config
+
+        save_config(mock_config, config_path)
+
+        content = config_path.read_text()
+        assert "[context]" in content
+        assert "coding_apps" in content
+        assert "planning_apps" in content
+        assert "coding_keywords" in content
+        assert "planning_keywords" in content
+
+        # Verify round-trip
+        with open(config_path, "rb") as f:
+            reloaded = tomllib.load(f)
+        assert reloaded["context"]["coding_apps"] == mock_config["context"]["coding_apps"]
+        assert reloaded["context"]["planning_apps"] == mock_config["context"]["planning_apps"]
+
+    def test_save_config_includes_streaming_context_fields(self, tmp_path, mock_config):
+        """Test that save_config serializes streaming context fields."""
+        config_path = tmp_path / "config.toml"
+
+        from localwispr.config import save_config
+
+        save_config(mock_config, config_path)
+
+        with open(config_path, "rb") as f:
+            reloaded = tomllib.load(f)
+
+        assert reloaded["streaming"]["context_check_interval"] == 3
+        assert reloaded["streaming"]["context_lock_threshold"] == 4
+        assert reloaded["streaming"]["context_word_threshold"] == 50
+
+    def test_save_load_round_trip_preserves_all_sections(self, tmp_path, mock_config):
+        """Test that a full save then load preserves all config sections."""
+        config_path = tmp_path / "config.toml"
+
+        from localwispr.config import load_config, save_config
+
+        save_config(mock_config, config_path)
+        reloaded = load_config(config_path)
+
+        # Model
+        assert reloaded["model"]["name"] == mock_config["model"]["name"]
+        assert reloaded["model"]["device"] == mock_config["model"]["device"]
+        assert reloaded["model"]["compute_type"] == mock_config["model"]["compute_type"]
+        assert reloaded["model"]["language"] == mock_config["model"]["language"]
+
+        # Hotkeys
+        assert reloaded["hotkeys"]["mode"] == mock_config["hotkeys"]["mode"]
+        assert reloaded["hotkeys"]["modifiers"] == mock_config["hotkeys"]["modifiers"]
+        assert reloaded["hotkeys"]["audio_feedback"] == mock_config["hotkeys"]["audio_feedback"]
+
+        # Context
+        assert reloaded["context"]["coding_apps"] == mock_config["context"]["coding_apps"]
+        assert reloaded["context"]["planning_apps"] == mock_config["context"]["planning_apps"]
+        assert reloaded["context"]["coding_keywords"] == mock_config["context"]["coding_keywords"]
+        assert reloaded["context"]["planning_keywords"] == mock_config["context"]["planning_keywords"]
+
+        # Output
+        assert reloaded["output"]["auto_paste"] == mock_config["output"]["auto_paste"]
+        assert reloaded["output"]["paste_delay_ms"] == mock_config["output"]["paste_delay_ms"]
+
+        # Vocabulary
+        assert reloaded["vocabulary"]["words"] == mock_config["vocabulary"]["words"]
+
+        # Streaming (all fields including new ones)
+        assert reloaded["streaming"]["enabled"] == mock_config["streaming"]["enabled"]
+        assert reloaded["streaming"]["min_silence_ms"] == mock_config["streaming"]["min_silence_ms"]
+        assert reloaded["streaming"]["overlap_ms"] == mock_config["streaming"]["overlap_ms"]
+        assert reloaded["streaming"]["context_check_interval"] == mock_config["streaming"]["context_check_interval"]
+        assert reloaded["streaming"]["context_lock_threshold"] == mock_config["streaming"]["context_lock_threshold"]
+        assert reloaded["streaming"]["context_word_threshold"] == mock_config["streaming"]["context_word_threshold"]

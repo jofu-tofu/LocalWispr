@@ -51,6 +51,9 @@ class StreamingConfig(TypedDict, total=False):
     max_segment_duration: float  # Maximum segment duration before forced split
     min_segment_duration: float  # Minimum segment duration to transcribe
     overlap_ms: int  # Audio overlap between segments for context
+    context_check_interval: int  # Seconds between context detection checks
+    context_lock_threshold: int  # Consecutive same-context checks before locking
+    context_word_threshold: int  # Minimum words before context detection runs
 
 
 class Config(TypedDict, total=False):
@@ -146,5 +149,8 @@ DEFAULT_CONFIG: Config = {
         "max_segment_duration": 20.0,  # Force split after 20s
         "min_segment_duration": 2.0,  # Avoid tiny fragments
         "overlap_ms": 100,  # Context overlap between segments
+        "context_check_interval": 3,  # Seconds between context checks
+        "context_lock_threshold": 4,  # Consecutive checks before locking
+        "context_word_threshold": 50,  # Min words before context detection
     },
 }

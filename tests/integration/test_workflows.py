@@ -6,133 +6,12 @@ the integration between multiple modules.
 
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock
 
 import numpy as np
 
 from tests.helpers import MockSegment
-
-
-class TestRecordingWorkflow:
-    """Tests for the complete recording → transcription → output workflow."""
-
-    def test_recording_to_transcription_workflow(self, mocker, mock_config, tmp_path, mock_model_downloaded):
-        """Test complete recording → transcription workflow."""
-        # Setup config
-        mocker.patch("localwispr.config.get_config", return_value=mock_config)
-        mocker.patch("localwispr.config._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
-        mocker.patch("localwispr.config._get_appdata_config_path", return_value=tmp_path / "user-settings.toml")
-
-        # Mock audio recorder to return test audio
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = True
-        mock_recorder.get_whisper_audio.return_value = np.random.randn(16000).astype(
-            np.float32
-        )
-        mocker.patch(
-            "localwispr.audio.AudioRecorder",
-            return_value=mock_recorder,
-        )
-
-        # Mock pywhispercpp Model
-        mock_model = MagicMock()
-        segments = [MockSegment(text=" This is a test transcription.")]
-        mock_model.transcribe.return_value = segments
-        mocker.patch(
-            "pywhispercpp.model.Model",
-            return_value=mock_model,
-        )
-        mocker.patch("localwispr.transcribe.model_manager.is_model_downloaded", return_value=True)
-        mocker.patch("localwispr.transcribe.model_manager.get_model_path", return_value="/fake/path/model.bin")
-
-        # Mock output (unused but prevents real clipboard operations)
-        mocker.patch(
-            "localwispr.output.copy_to_clipboard",
-            return_value=True,
-        )
-
-        # Reset mode manager
-        import localwispr.modes.manager as manager_module
-
-        manager_module._mode_manager = None
-
-        from localwispr.modes import ModeManager, ModeType
-        from localwispr.pipeline import RecordingPipeline
-
-        mode_manager = ModeManager()
-        mode_manager.set_mode(ModeType.DICTATION)
-
-        pipeline = RecordingPipeline(mode_manager=mode_manager)
-        pipeline._recorder = mock_recorder
-        pipeline._model_preload_complete.set()
-
-        # Execute workflow
-        result = pipeline.stop_and_transcribe()
-
-        # Verify
-        assert result.success is True
-        assert "test transcription" in result.text.lower()
-
-    def test_mode_affects_transcription(self, mocker, mock_config, tmp_path, mock_model_downloaded):
-        """Test that different modes use different prompts."""
-        mocker.patch("localwispr.config.get_config", return_value=mock_config)
-        mocker.patch("localwispr.config._get_defaults_path", return_value=tmp_path / "config-defaults.toml")
-        mocker.patch("localwispr.config._get_appdata_config_path", return_value=tmp_path / "user-settings.toml")
-
-        # Reset mode manager
-        import localwispr.modes.manager as manager_module
-
-        manager_module._mode_manager = None
-
-        # Track prompts used
-        prompts_used = []
-
-        def track_prompt(*args, **kwargs):
-            if "initial_prompt" in kwargs:
-                prompts_used.append(kwargs["initial_prompt"])
-            return MagicMock(
-                text="test",
-                segments=[],
-                inference_time=0.1,
-                audio_duration=1.0,
-                detected_context=None,
-                was_retranscribed=False,
-            )
-
-        mock_transcriber = MagicMock()
-        mock_transcriber.model = MagicMock()
-        mock_transcriber.transcribe.side_effect = track_prompt
-
-        mocker.patch(
-            "localwispr.transcribe.transcriber.WhisperTranscriber",
-            return_value=mock_transcriber,
-        )
-
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = True
-        mock_recorder.get_whisper_audio.return_value = np.zeros(16000, dtype=np.float32)
-        mocker.patch(
-            "localwispr.audio.AudioRecorder",
-            return_value=mock_recorder,
-        )
-
-        from localwispr.modes import ModeManager, ModeType
-        from localwispr.pipeline import RecordingPipeline
-
-        # Test with CODE mode
-        mode_manager = ModeManager()
-        mode_manager.set_mode(ModeType.CODE)
-
-        pipeline = RecordingPipeline(mode_manager=mode_manager)
-        pipeline._recorder = mock_recorder
-        pipeline._model_preload_complete.set()
-
-        pipeline.stop_and_transcribe()
-
-        # Verify prompt was passed
-        assert len(prompts_used) == 1
-        # The prompt should be loaded for coding mode
-        assert prompts_used[0] is not None
 
 
 class TestContextDetectionWorkflow:
@@ -405,3 +284,274 @@ class TestAudioProcessingWorkflow:
         assert len(whisper_audio) == 16000
         assert whisper_audio.dtype == np.float32
         assert np.max(np.abs(whisper_audio)) <= 1.0
+
+
+class TestModelLoadingWorkflows:
+    """Behavior-focused tests for model loading and transcription.
+
+    These tests mock only system boundaries (pywhispercpp, sounddevice)
+    and let internal code (is_model_downloaded, preload_model_async,
+    WhisperTranscriber, RecordingPipeline) run for real.
+    """
+
+    def test_model_not_downloaded_returns_immediate_error(
+        self, mocker, mock_config, models_in_tmp, reset_mode_manager, sync_executor,
+    ):
+        """User records with no model -> gets 'not downloaded' error in < 1 second."""
+        mocker.patch("localwispr.config.get_config", return_value=mock_config)
+        mocker.patch("pywhispercpp.model.Model")
+        mocker.patch("localwispr.audio.recorder.sd")
+
+        # models_in_tmp() with no arg = no model file = not downloaded
+        models_in_tmp()
+
+        from localwispr.modes import ModeManager, ModeType
+        from localwispr.pipeline import RecordingPipeline
+
+        mode_manager = ModeManager()
+        mode_manager.set_mode(ModeType.DICTATION)
+
+        pipeline = RecordingPipeline(mode_manager=mode_manager, executor=sync_executor)
+
+        # Run preload — should detect model not downloaded and set error
+        pipeline.preload_model_async()
+        pipeline._model_preload_complete.wait(timeout=5.0)
+
+        # Simulate recording
+        mock_recorder = MagicMock()
+        mock_recorder.is_recording = True
+        mock_recorder.get_whisper_audio.return_value = np.zeros(16000, dtype=np.float32)
+        pipeline._recorder = mock_recorder
+
+        start = time.monotonic()
+        result = pipeline.stop_and_transcribe()
+        elapsed = time.monotonic() - start
+
+        assert result.success is False
+        assert "not downloaded" in result.error.lower()
+        assert elapsed < 1.0
+
+    def test_recording_produces_transcription_text(
+        self, mocker, mock_config, models_in_tmp, reset_mode_manager, sync_executor,
+    ):
+        """User records and releases -> gets transcription text."""
+        mocker.patch("localwispr.config.get_config", return_value=mock_config)
+        mocker.patch("localwispr.transcribe.transcriber.get_config", return_value=mock_config)
+
+        # Create dummy model file so is_model_downloaded returns True
+        models_in_tmp("tiny")
+
+        # Mock pywhispercpp.model.Model to return transcription segments
+        mock_model = MagicMock()
+        segments = [MockSegment(text=" Hello world transcription.")]
+        mock_model.transcribe.return_value = segments
+        mocker.patch("pywhispercpp.model.Model", return_value=mock_model)
+
+        mocker.patch("localwispr.audio.recorder.sd")
+
+        from localwispr.modes import ModeManager, ModeType
+        from localwispr.pipeline import RecordingPipeline
+
+        mode_manager = ModeManager()
+        mode_manager.set_mode(ModeType.DICTATION)
+
+        pipeline = RecordingPipeline(mode_manager=mode_manager, executor=sync_executor)
+
+        # Run preload — should succeed since model file exists
+        pipeline.preload_model_async()
+        pipeline._model_preload_complete.wait(timeout=5.0)
+
+        # Simulate recording
+        mock_recorder = MagicMock()
+        mock_recorder.is_recording = True
+        mock_recorder.get_whisper_audio.return_value = np.zeros(16000, dtype=np.float32)
+        pipeline._recorder = mock_recorder
+
+        result = pipeline.stop_and_transcribe()
+
+        assert result.success is True
+        assert "hello world transcription" in result.text.lower()
+
+    def test_preload_error_recovery(
+        self, mocker, mock_config, models_in_tmp, reset_mode_manager, sync_executor,
+    ):
+        """Model file exists but first load fails -> sync retry succeeds."""
+        mocker.patch("localwispr.config.get_config", return_value=mock_config)
+        mocker.patch("localwispr.transcribe.transcriber.get_config", return_value=mock_config)
+
+        models_in_tmp("tiny")
+
+        # First Model() call raises (during preload), second succeeds (during sync fallback)
+        mock_model = MagicMock()
+        segments = [MockSegment(text=" Recovery transcription.")]
+        mock_model.transcribe.return_value = segments
+        mocker.patch(
+            "pywhispercpp.model.Model",
+            side_effect=[RuntimeError("corrupted model"), mock_model],
+        )
+
+        mocker.patch("localwispr.audio.recorder.sd")
+
+        from localwispr.modes import ModeManager, ModeType
+        from localwispr.pipeline import RecordingPipeline
+
+        mode_manager = ModeManager()
+        mode_manager.set_mode(ModeType.DICTATION)
+
+        pipeline = RecordingPipeline(mode_manager=mode_manager, executor=sync_executor)
+
+        # Preload fails (first Model() call raises)
+        pipeline.preload_model_async()
+        pipeline._model_preload_complete.wait(timeout=5.0)
+
+        assert pipeline.model_preload_state == "error"
+
+        # Simulate recording
+        mock_recorder = MagicMock()
+        mock_recorder.is_recording = True
+        mock_recorder.get_whisper_audio.return_value = np.zeros(16000, dtype=np.float32)
+        pipeline._recorder = mock_recorder
+
+        # Sync fallback should retry and succeed
+        result = pipeline.stop_and_transcribe()
+
+        assert result.success is True
+        assert "recovery transcription" in result.text.lower()
+
+    def test_model_preload_state_reflects_reality(
+        self, mocker, mock_config, models_in_tmp, reset_mode_manager,
+    ):
+        """model_preload_state returns correct values at each lifecycle stage."""
+        mocker.patch("localwispr.config.get_config", return_value=mock_config)
+        mocker.patch("pywhispercpp.model.Model")
+
+        from localwispr.modes import ModeManager
+        from localwispr.pipeline import RecordingPipeline
+
+        mode_manager = ModeManager()
+        pipeline = RecordingPipeline(mode_manager=mode_manager)
+
+        # Before preload starts
+        assert pipeline.model_preload_state == "loading"
+
+        # Case 1: Model not downloaded
+        models_in_tmp()  # no model file
+        pipeline.preload_model_async()
+        pipeline._model_preload_complete.wait(timeout=5.0)
+
+        assert pipeline.model_preload_state == "not_downloaded"
+
+    def test_get_model_name_shows_useful_status(
+        self, mocker, mock_config, models_in_tmp, reset_mode_manager,
+    ):
+        """get_model_name() returns user-facing strings at correct stages."""
+        mocker.patch("localwispr.config.get_config", return_value=mock_config)
+        mocker.patch("pywhispercpp.model.Model")
+
+        from localwispr.modes import ModeManager
+        from localwispr.pipeline import RecordingPipeline
+
+        mode_manager = ModeManager()
+        pipeline = RecordingPipeline(mode_manager=mode_manager)
+
+        # Before preload
+        assert pipeline.get_model_name() == "Loading..."
+
+        # Model not downloaded
+        models_in_tmp()
+        pipeline.preload_model_async()
+        pipeline._model_preload_complete.wait(timeout=5.0)
+
+        assert pipeline.get_model_name() == "Not downloaded"
+
+    def test_async_transcription_callbacks_fire_correctly(
+        self, mocker, mock_config, models_in_tmp, reset_mode_manager, sync_executor,
+    ):
+        """on_result and on_complete callbacks fire with correct data."""
+        mocker.patch("localwispr.config.get_config", return_value=mock_config)
+        mocker.patch("localwispr.transcribe.transcriber.get_config", return_value=mock_config)
+
+        models_in_tmp("tiny")
+
+        mock_model = MagicMock()
+        segments = [MockSegment(text=" Async test result.")]
+        mock_model.transcribe.return_value = segments
+        mocker.patch("pywhispercpp.model.Model", return_value=mock_model)
+
+        mocker.patch("localwispr.audio.recorder.sd")
+
+        from localwispr.modes import ModeManager, ModeType
+        from localwispr.pipeline import RecordingPipeline
+
+        mode_manager = ModeManager()
+        mode_manager.set_mode(ModeType.DICTATION)
+
+        pipeline = RecordingPipeline(mode_manager=mode_manager, executor=sync_executor)
+
+        # Preload model
+        pipeline.preload_model_async()
+        pipeline._model_preload_complete.wait(timeout=5.0)
+
+        # Simulate recording
+        mock_recorder = MagicMock()
+        mock_recorder.is_recording = True
+        mock_recorder.get_whisper_audio.return_value = np.zeros(16000, dtype=np.float32)
+        pipeline._recorder = mock_recorder
+
+        # Track callbacks
+        results = []
+        completions = []
+
+        def on_result(result, gen):
+            results.append((result, gen))
+
+        def on_complete(gen):
+            completions.append(gen)
+
+        gen = pipeline.stop_and_transcribe_async(
+            on_result=on_result, on_complete=on_complete,
+        )
+
+        assert len(results) == 1
+        assert results[0][0].success is True
+        assert "async test result" in results[0][0].text.lower()
+        assert results[0][1] == gen
+        assert len(completions) == 1
+        assert completions[0] == gen
+
+    def test_record_rejected_when_model_missing(
+        self, mocker, mock_config, models_in_tmp, reset_mode_manager,
+    ):
+        """Pressing hotkey with no model -> overlay shows error, no recording."""
+        mocker.patch("localwispr.config.get_config", return_value=mock_config)
+        mocker.patch("pywhispercpp.model.Model")
+
+        # No model file
+        models_in_tmp()
+
+        # Mock UI boundaries
+        mock_overlay = MagicMock()
+        mocker.patch("localwispr.ui.overlay.OverlayWidget", return_value=mock_overlay)
+
+        import localwispr.settings.manager as sm_module
+        sm_module._settings_manager = None
+
+        from localwispr.ui.tray import TrayApp
+
+        app = TrayApp()
+
+        # Run preload so pipeline knows model is missing
+        app._pipeline.preload_model_async()
+        app._pipeline._model_preload_complete.wait(timeout=5.0)
+
+        assert app._pipeline.model_preload_state == "not_downloaded"
+
+        # Simulate hotkey press
+        app._on_record_start()
+
+        # Overlay should show error
+        mock_overlay.show_error.assert_called_once_with(
+            "Model not downloaded. Open Settings to download."
+        )
+        # Recording should NOT have started
+        assert app._pipeline.is_recording is False

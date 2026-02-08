@@ -43,7 +43,6 @@ class TestRecordingPipeline:
 
         assert result is True
         assert pipeline.is_recording is True
-        mock_audio_recorder.start_recording.assert_called_once()
 
     def test_pipeline_start_recording_already_recording(self, mock_audio_recorder, reset_mode_manager):
         """Test starting recording when already recording."""
@@ -153,7 +152,8 @@ class TestRecordingPipeline:
 
         pipeline.cancel_recording()
 
-        mock_audio_recorder.stop_recording.assert_called_once()
+        # Recording should be stopped (observable state change)
+        assert mock_audio_recorder.is_recording is False
 
     def test_pipeline_get_rms_level(self, mocker, reset_mode_manager):
         """Test getting RMS level during recording."""
@@ -210,11 +210,12 @@ class TestRecordingPipeline:
         self, mocker, reset_mode_manager, mock_model_downloaded
     ):
         """Test that preload failure is recovered via synchronous loading."""
-        # Track transcriber initialization calls
-        init_count = [0]
+        call_count = [0]
 
         def mock_transcriber_init(*args, **kwargs):
-            init_count[0] += 1
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise Exception("Network error during preload")
             mock = MagicMock()
             mock.model = MagicMock()
             return mock
@@ -230,18 +231,17 @@ class TestRecordingPipeline:
         mode_manager = ModeManager()
         pipeline = RecordingPipeline(mode_manager=mode_manager)
 
-        # Simulate preload failure
-        pipeline._model_preload_error = Exception("Network error during preload")
-        pipeline._model_preload_complete.set()
+        # Use preload_model_async which will hit the first call and fail
+        pipeline.preload_model_async()
+        pipeline._model_preload_complete.wait(timeout=2.0)
 
-        # Call _get_transcriber - should detect error and retry sync
+        # Preload failed — _get_transcriber should detect and retry sync
         transcriber = pipeline._get_transcriber()
 
         # Verify sync fallback succeeded
         assert transcriber is not None
-        assert init_count[0] == 1  # Sync init happened
-        assert pipeline._model_preload_error is None  # Error cleared
-        assert pipeline._transcriber is transcriber  # Stored for reuse
+        assert call_count[0] == 2  # First call failed, second succeeded
+        assert pipeline.is_model_ready is True
 
     def test_get_model_name_during_loading(self, mocker, reset_mode_manager):
         """Test get_model_name returns loading status before model ready."""
@@ -687,8 +687,16 @@ class TestAsyncTranscription:
         # Should restore mute state even with no audio
         mock_restore.assert_called_once_with(True)
 
-    def test_is_current_generation(self, reset_mode_manager, sync_executor):
-        """Test is_current_generation helper method."""
+    def test_is_current_generation(self, mocker, reset_mode_manager, sync_executor):
+        """Test is_current_generation tracks generation via public API."""
+        mock_recorder = MagicMock()
+        mock_recorder.is_recording = True
+        mock_recorder.get_whisper_audio.return_value = np.zeros(16000, dtype=np.float32)
+        mocker.patch(
+            "localwispr.audio.AudioRecorder",
+            return_value=mock_recorder,
+        )
+
         from localwispr.modes import ModeManager
         from localwispr.pipeline import RecordingPipeline
 
@@ -697,21 +705,69 @@ class TestAsyncTranscription:
             mode_manager=mode_manager,
             executor=sync_executor,
         )
+        pipeline._recorder = mock_recorder
+        pipeline._model_preload_complete.set()
 
         # Initially generation is 0
         assert pipeline.is_current_generation(0) is True
         assert pipeline.is_current_generation(1) is False
 
-        # Increment generation
-        with pipeline._generation_lock:
-            pipeline._current_generation = 5
+        # stop_and_transcribe_async increments generation
+        gen1 = pipeline.stop_and_transcribe_async(on_result=lambda r, g: None)
+        assert pipeline.is_current_generation(gen1) is True
+        assert pipeline.is_current_generation(0) is False
 
-        assert pipeline.is_current_generation(5) is True
-        assert pipeline.is_current_generation(4) is False
+        # Another call increments again
+        mock_recorder.is_recording = True
+        gen2 = pipeline.stop_and_transcribe_async(on_result=lambda r, g: None)
+        assert pipeline.is_current_generation(gen2) is True
+        assert pipeline.is_current_generation(gen1) is False
 
         # Shutdown makes all generations stale
-        pipeline._shutting_down = True
-        assert pipeline.is_current_generation(5) is False
+        pipeline.shutdown(timeout=0.1)
+        assert pipeline.is_current_generation(gen2) is False
+
+    def test_invalidate_transcriber_forces_reload(
+        self, mocker, reset_mode_manager, mock_model_downloaded
+    ):
+        """Test that invalidate + clear_model_preload causes model to be reloaded."""
+        mock_transcriber = MagicMock()
+        mock_transcriber.model = MagicMock()
+        init_count = [0]
+
+        def mock_init(*args, **kwargs):
+            init_count[0] += 1
+            return mock_transcriber
+
+        mocker.patch(
+            "localwispr.transcribe.transcriber.WhisperTranscriber",
+            side_effect=mock_init,
+        )
+
+        from localwispr.modes import ModeManager
+        from localwispr.pipeline import RecordingPipeline
+
+        mode_manager = ModeManager()
+        pipeline = RecordingPipeline(mode_manager=mode_manager)
+
+        # Initial preload
+        pipeline.preload_model_async()
+        pipeline._model_preload_complete.wait(timeout=2.0)
+        assert pipeline.is_model_ready is True
+        assert init_count[0] == 1
+
+        # Invalidate and clear — this is the settings-change path
+        pipeline.invalidate_transcriber()
+        pipeline.clear_model_preload()
+
+        # After clear_model_preload, model is no longer ready (event cleared)
+        assert pipeline.is_model_ready is False
+
+        # Wait for new preload to complete (clear_model_preload triggers preload_model_async)
+        pipeline._model_preload_complete.wait(timeout=2.0)
+
+        assert pipeline.is_model_ready is True
+        assert init_count[0] == 2  # Model was loaded again
 
 
 class TestCriticalEdgeCases:

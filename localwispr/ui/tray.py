@@ -604,6 +604,15 @@ class TrayApp:
         Called by the hotkey listener when the hotkey chord is activated.
         Delegates to RecordingPipeline for actual recording.
         """
+        # Reject immediately if model isn't downloaded
+        preload_state = self._pipeline.model_preload_state
+        if preload_state == "not_downloaded":
+            logger.warning("recording: model not downloaded, rejecting record start")
+            self._overlay.show_error("Model not downloaded. Open Settings to download.")
+            if self._hotkey_listener is not None:
+                self._hotkey_listener.on_transcription_complete()
+            return
+
         from localwispr.config import get_config
         from localwispr.audio.feedback import play_start_beep
 
@@ -853,24 +862,9 @@ class TrayApp:
             # Start the floating overlay widget
             self._overlay.start()
 
-            # Conditional model preloading - only if model is already downloaded
-            from localwispr.config import get_config
-            from localwispr.transcribe.model_manager import is_model_downloaded
-
-            config = get_config()
-            model_name = config["model"]["name"]
-
-            if is_model_downloaded(model_name):
-                # Model cached - preload in background
-                self._pipeline.preload_model_async()
-                logger.info("model_preload: model %s cached, starting preload", model_name)
-            else:
-                # Model not downloaded - skip preload, user must download via Settings
-                logger.info(
-                    "model_preload: model %s not downloaded, skipping preload. "
-                    "User should download via Settings.",
-                    model_name,
-                )
+            # Start model preloading - pipeline handles not-downloaded case
+            self._pipeline.preload_model_async()
+            logger.info("model_preload: starting background preload")
 
             # Start the hotkey listener
             try:

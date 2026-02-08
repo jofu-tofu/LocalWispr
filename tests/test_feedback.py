@@ -62,23 +62,6 @@ class TestGenerateTone:
 class TestPlayToneAsync:
     """Tests for the _play_tone_async function."""
 
-    def test_play_tone_async_calls_sounddevice(self, mocker):
-        """Test that _play_tone_async calls sd.play."""
-        mock_sd = mocker.patch("localwispr.audio.feedback.sd")
-        mock_sd.play = MagicMock()
-        mock_sd.wait = MagicMock()
-
-        from localwispr.audio.feedback import _play_tone_async
-
-        _play_tone_async(440, 100)
-
-        # Wait a moment for the daemon thread to execute
-        import time
-        time.sleep(0.1)
-
-        # Should have called play (though timing is tricky with threads)
-        # At minimum, verify no exception was raised
-
     def test_play_tone_async_handles_exception(self, mocker):
         """Test that _play_tone_async handles sounddevice errors gracefully."""
         mock_sd = mocker.patch("localwispr.audio.feedback.sd")
@@ -94,28 +77,67 @@ class TestPlayToneAsync:
 
 
 class TestPlayStartBeep:
-    """Tests for play_start_beep function."""
+    """Tests for play_start_beep producing audio that reaches sounddevice."""
 
-    def test_play_start_beep_calls_play_tone(self, mocker):
-        """Test that play_start_beep calls _play_tone_async with correct params."""
-        mock_play = mocker.patch("localwispr.audio.feedback._play_tone_async")
+    def test_play_start_beep_produces_audio(self, mocker):
+        """Test that play_start_beep sends non-empty audio to sd.play."""
+        mock_sd = mocker.patch("localwispr.audio.feedback.sd")
 
         from localwispr.audio.feedback import play_start_beep
 
         play_start_beep()
 
-        mock_play.assert_called_once_with(600, 150, volume=0.25)
+        import time
+        time.sleep(0.1)
+
+        # Audio reached the system boundary (sd.play)
+        mock_sd.play.assert_called_once()
+        audio_data = mock_sd.play.call_args[0][0]
+        assert len(audio_data) > 0
 
 
 class TestPlayStopBeep:
-    """Tests for play_stop_beep function."""
+    """Tests for play_stop_beep producing audio that reaches sounddevice."""
 
-    def test_play_stop_beep_calls_play_tone(self, mocker):
-        """Test that play_stop_beep calls _play_tone_async with correct params."""
-        mock_play = mocker.patch("localwispr.audio.feedback._play_tone_async")
+    def test_play_stop_beep_produces_audio(self, mocker):
+        """Test that play_stop_beep sends non-empty audio to sd.play."""
+        mock_sd = mocker.patch("localwispr.audio.feedback.sd")
 
         from localwispr.audio.feedback import play_stop_beep
 
         play_stop_beep()
 
-        mock_play.assert_called_once_with(440, 150, volume=0.25)
+        import time
+        time.sleep(0.1)
+
+        # Audio reached the system boundary (sd.play)
+        mock_sd.play.assert_called_once()
+        audio_data = mock_sd.play.call_args[0][0]
+        assert len(audio_data) > 0
+
+
+class TestStartAndStopBeepsDiffer:
+    """Tests that start and stop beeps produce distinguishable audio."""
+
+    def test_play_stop_beep_audio_is_different_from_start(self, mocker):
+        """Test that start and stop beeps produce different audio waveforms."""
+        import time
+
+        mock_sd = mocker.patch("localwispr.audio.feedback.sd")
+
+        from localwispr.audio.feedback import play_start_beep, play_stop_beep
+
+        # Capture start beep audio
+        play_start_beep()
+        time.sleep(0.1)
+        start_audio = mock_sd.play.call_args[0][0].copy()
+
+        mock_sd.reset_mock()
+
+        # Capture stop beep audio
+        play_stop_beep()
+        time.sleep(0.1)
+        stop_audio = mock_sd.play.call_args[0][0].copy()
+
+        # Start and stop beeps should produce different audio
+        assert not np.array_equal(start_audio, stop_audio)

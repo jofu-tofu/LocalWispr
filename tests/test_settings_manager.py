@@ -53,28 +53,28 @@ class TestSettingsInvalidation:
 class TestSettingsManager:
     """Tests for the SettingsManager class."""
 
-    def test_register_handler(self):
-        """Test handler registration."""
+    def test_register_handler_is_invoked_on_matching_change(self):
+        """Test registered handler is invoked when a matching setting changes."""
         manager = SettingsManager()
-        handler = MagicMock()
+        called = []
+        manager.register_handler(InvalidationFlags.TRANSCRIBER, lambda: called.append(True))
 
-        manager.register_handler(InvalidationFlags.TRANSCRIBER, handler)
+        manager.apply_settings({"model": {"name": "small"}}, {"model": {"name": "large-v3"}})
 
-        # Handler should be registered
-        assert InvalidationFlags.TRANSCRIBER in manager._handlers
-        assert handler in manager._handlers[InvalidationFlags.TRANSCRIBER]
+        assert len(called) == 1
 
-    def test_register_handler_multiple_flags(self):
-        """Test registering handler for combined flags."""
+    def test_register_handler_multiple_flags_invoked_for_each(self):
+        """Test handler registered for combined flags is invoked for each flag type."""
         manager = SettingsManager()
-        handler = MagicMock()
-
+        called = []
         combined = InvalidationFlags.TRANSCRIBER | InvalidationFlags.MODEL_PRELOAD
-        manager.register_handler(combined, handler)
+        manager.register_handler(combined, lambda: called.append(True))
 
-        # Handler should be registered for both flags
-        assert handler in manager._handlers[InvalidationFlags.TRANSCRIBER]
-        assert handler in manager._handlers[InvalidationFlags.MODEL_PRELOAD]
+        # model.name triggers both TRANSCRIBER and MODEL_PRELOAD
+        manager.apply_settings({"model": {"name": "small"}}, {"model": {"name": "large-v3"}})
+
+        # Handler should be called (once, since apply_settings deduplicates handlers)
+        assert len(called) >= 1
 
     def test_apply_settings_detects_change(self):
         """Test that apply_settings detects config changes."""

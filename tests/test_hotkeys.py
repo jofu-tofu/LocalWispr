@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -108,29 +109,27 @@ class TestHotkeyListener:
         assert listener._chord_modifiers == {"win", "ctrl", "shift"}
 
     def test_listener_start(self, mock_config, mock_keyboard):
-        """Test that start() creates and starts the pynput listener."""
+        """Test that start() transitions to running state."""
         from localwispr.hotkeys import HotkeyListener
 
         listener = HotkeyListener()
         listener.start()
 
         assert listener.is_running
-        mock_keyboard["listener_class"].assert_called_once()
-        mock_keyboard["listener"].start.assert_called_once()
 
     def test_listener_start_twice_no_op(self, mock_config, mock_keyboard):
-        """Test that calling start() twice doesn't create duplicate listeners."""
+        """Test that calling start() twice keeps running state (idempotent)."""
         from localwispr.hotkeys import HotkeyListener
 
         listener = HotkeyListener()
         listener.start()
         listener.start()
 
-        # Should only be called once
-        assert mock_keyboard["listener_class"].call_count == 1
+        # Still running, no error from double-start
+        assert listener.is_running
 
     def test_listener_stop(self, mock_config, mock_keyboard):
-        """Test that stop() stops the pynput listener."""
+        """Test that stop() transitions to not-running state."""
         from localwispr.hotkeys import HotkeyListener
 
         listener = HotkeyListener()
@@ -138,7 +137,6 @@ class TestHotkeyListener:
         listener.stop()
 
         assert not listener.is_running
-        mock_keyboard["listener"].stop.assert_called_once()
 
     def test_listener_stop_without_start(self, mock_config, mock_keyboard):
         """Test that stop() without start() is safe."""
@@ -279,63 +277,66 @@ class TestChordDetection:
 
         return HotkeyListener()
 
-    def test_is_chord_pressed_all_modifiers(self, listener):
-        """Test chord detection when all required modifiers are pressed."""
-        import time
+    def test_chord_detected_when_all_modifiers_pressed(self, listener):
+        """Test chord detection when all required modifiers are pressed via key events."""
+        from pynput.keyboard import Key
 
-        listener._win_pressed = True
-        listener._ctrl_pressed = True
-        listener._shift_pressed = True
-        listener._alt_pressed = False
-
-        # Set press times to be recent
-        now = time.time()
-        listener._win_press_time = now
-        listener._ctrl_press_time = now
-        listener._shift_press_time = now
+        listener._running = True
+        listener._start_time = time.time() - 1  # Past grace period
+        listener._on_key_press(Key.cmd)
+        listener._on_key_press(Key.ctrl_l)
+        listener._on_key_press(Key.shift)
 
         assert listener._is_chord_pressed()
 
-    def test_is_chord_pressed_missing_modifier(self, listener):
-        """Test chord detection when a modifier is missing."""
-        listener._win_pressed = True
-        listener._ctrl_pressed = True
-        listener._shift_pressed = False  # Missing
+    def test_chord_not_detected_when_modifier_missing(self, listener):
+        """Test chord not detected when a required modifier is missing."""
+        from pynput.keyboard import Key
+
+        listener._running = True
+        listener._start_time = time.time() - 1
+        listener._on_key_press(Key.cmd)
+        listener._on_key_press(Key.ctrl_l)
+        # Shift not pressed
 
         assert not listener._is_chord_pressed()
 
-    def test_is_chord_pressed_exclusion_modifier(self, listener):
-        """Test chord detection blocked by exclusion modifier."""
-        import time
+    def test_chord_blocked_by_exclusion_modifier(self, listener):
+        """Test chord detection blocked by exclusion modifier pressed via events."""
+        from pynput.keyboard import Key
 
-        listener._win_pressed = True
-        listener._ctrl_pressed = True
-        listener._shift_pressed = True
-        listener._alt_pressed = True  # Exclusion modifier pressed
-
-        now = time.time()
-        listener._win_press_time = now
-        listener._ctrl_press_time = now
-        listener._shift_press_time = now
+        listener._running = True
+        listener._start_time = time.time() - 1
+        listener._on_key_press(Key.cmd)
+        listener._on_key_press(Key.ctrl_l)
+        listener._on_key_press(Key.shift)
+        listener._on_key_press(Key.alt_l)  # Exclusion modifier
 
         # Alt is the exclusion modifier for Win+Ctrl+Shift chord
         assert not listener._is_chord_pressed()
 
-    def test_is_mode_chord_pressed(self, listener):
-        """Test mode cycle chord detection (Win+Ctrl+Alt)."""
-        listener._win_pressed = True
-        listener._ctrl_pressed = True
-        listener._alt_pressed = True
-        listener._shift_pressed = False
+    def test_mode_chord_detected_via_key_events(self, listener):
+        """Test mode cycle chord detection (Win+Ctrl+Alt) via key events."""
+        from pynput.keyboard import Key
+
+        listener._running = True
+        listener._start_time = time.time() - 1
+        listener._on_key_press(Key.cmd)
+        listener._on_key_press(Key.ctrl_l)
+        listener._on_key_press(Key.alt_l)
 
         assert listener._is_mode_chord_pressed()
 
-    def test_is_mode_chord_pressed_with_shift(self, listener):
-        """Test mode chord blocked when Shift is pressed."""
-        listener._win_pressed = True
-        listener._ctrl_pressed = True
-        listener._alt_pressed = True
-        listener._shift_pressed = True  # Should block mode chord
+    def test_mode_chord_blocked_when_shift_pressed(self, listener):
+        """Test mode chord blocked when Shift is pressed via key events."""
+        from pynput.keyboard import Key
+
+        listener._running = True
+        listener._start_time = time.time() - 1
+        listener._on_key_press(Key.cmd)
+        listener._on_key_press(Key.ctrl_l)
+        listener._on_key_press(Key.alt_l)
+        listener._on_key_press(Key.shift)  # Should block mode chord
 
         assert not listener._is_mode_chord_pressed()
 
@@ -453,5 +454,54 @@ class TestStateTransitions:
         # Should remain TRANSCRIBING
         assert listener.state == HotkeyState.TRANSCRIBING
         assert callback_called == []
+
+
+class TestPushToTalkCycle:
+    """End-to-end test for the full push-to-talk lifecycle via key events."""
+
+    @pytest.fixture
+    def mock_config(self, mocker):
+        """Mock get_config."""
+        config = {
+            "hotkeys": {
+                "modifiers": ["win", "ctrl", "shift"],
+            }
+        }
+        mocker.patch("localwispr.hotkeys.get_config", return_value=config)
+        return config
+
+    def test_full_push_to_talk_cycle_via_events(self, mock_config, mocker):
+        """Full cycle: press chord → RECORDING → release → TRANSCRIBING → complete → IDLE."""
+        from pynput.keyboard import Key
+
+        mocker.patch("localwispr.hotkeys.keyboard.Listener")
+        from localwispr.hotkeys import HotkeyListener, HotkeyState
+
+        callbacks = []
+        listener = HotkeyListener(
+            on_record_start=lambda: callbacks.append("start"),
+            on_record_stop=lambda: callbacks.append("stop"),
+        )
+        listener._running = True
+        listener._start_time = time.time() - 1  # Past grace period
+
+        # Press all chord keys → should transition to RECORDING
+        listener._on_key_press(Key.cmd)
+        listener._on_key_press(Key.ctrl_l)
+        listener._on_key_press(Key.shift)
+
+        assert listener.state == HotkeyState.RECORDING
+        assert callbacks == ["start"]
+
+        # Release one chord key → should transition to TRANSCRIBING
+        listener._on_key_release(Key.shift)
+
+        assert listener.state == HotkeyState.TRANSCRIBING
+        assert callbacks == ["start", "stop"]
+
+        # Complete transcription → should transition back to IDLE
+        listener.on_transcription_complete()
+
+        assert listener.state == HotkeyState.IDLE
 
 

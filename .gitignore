@@ -32,7 +32,6 @@ models/*.bin
 .electron/
 
 # AIW Installation
-.aiwcli/
 .claude/
 
 # Python
