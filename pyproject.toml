@@ -5,6 +5,7 @@ description = "Local speech-to-text using Whisper - privacy-first, no cloud APIs
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "faster-whisper>=1.2.1",
     "pywhispercpp>=1.4.0",
     "pillow>=12.1.0",
     "pygetwindow>=0.0.9",
@@ -15,8 +16,7 @@ dependencies = [
     "sounddevice>=0.5.3",
     "winotify>=1.1.0",
     "pycaw>=20230407",
-    "torch>=2.5.0",
-    "torchaudio>=2.5.0",
+    "nvidia-cublas-cu12>=12.4",
 ]
 
 [project.scripts]
@@ -25,6 +25,16 @@ localwispr = "localwispr.__main__:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: integration tests with minimal mocking",
+    "gui: GUI tests that may require a display",
+    "e2e: end-to-end smoke tests",
+]
+addopts = "--durations=10 --color=yes"
 
 [dependency-groups]
 dev = [

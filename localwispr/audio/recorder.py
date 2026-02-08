@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 import sounddevice as sd
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     pass  # Future type imports
@@ -94,8 +97,7 @@ class AudioRecorder:
             status: Status flags from sounddevice.
         """
         if status:
-            # Log status flags (overflow/underflow warnings)
-            pass  # Could add logging here if needed
+            logger.warning("audio_callback: sounddevice status=%s", status)
 
         # Make a copy for storage and potential callback
         chunk_copy = indata.copy()
@@ -248,8 +250,22 @@ class AudioRecorder:
         # Stop recording and get raw audio
         raw_audio = self.stop_recording()
 
+        logger.debug(
+            "get_whisper_audio: raw shape=%s sample_rate=%d",
+            raw_audio.shape,
+            self._sample_rate,
+        )
+
         # Convert to Whisper format
-        return prepare_for_whisper(raw_audio, self._sample_rate)
+        whisper_audio = prepare_for_whisper(raw_audio, self._sample_rate)
+
+        logger.debug(
+            "get_whisper_audio: converted shape=%s dtype=%s",
+            whisper_audio.shape,
+            whisper_audio.dtype,
+        )
+
+        return whisper_audio
 
 
 def list_audio_devices() -> list[dict[str, Any]]:

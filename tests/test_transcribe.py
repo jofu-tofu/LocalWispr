@@ -4,7 +4,63 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from tests.helpers import MockSegment
+import pytest
+
+from tests.helpers import MockSegment, MockTranscriptionInfo
+
+
+class TestIsModelDownloaded:
+    """Tests for is_model_downloaded() with faster-whisper backend."""
+
+    def test_ct2_cached_returns_true(self, mocker):
+        """When CT2 model is in HuggingFace cache, returns True."""
+        mocker.patch(
+            "localwispr.transcribe.model_manager.get_active_backend",
+            return_value="faster-whisper",
+        )
+        mocker.patch(
+            "localwispr.transcribe.model_manager._is_model_downloaded_faster_whisper",
+            return_value=True,
+        )
+        from localwispr.transcribe.model_manager import is_model_downloaded
+
+        assert is_model_downloaded("large-v3") is True
+
+    def test_ggml_exists_ct2_not_cached_returns_true(self, mocker):
+        """When GGML exists but CT2 is not cached, returns True (auto-download)."""
+        mocker.patch(
+            "localwispr.transcribe.model_manager.get_active_backend",
+            return_value="faster-whisper",
+        )
+        mocker.patch(
+            "localwispr.transcribe.model_manager._is_model_downloaded_faster_whisper",
+            return_value=False,
+        )
+        mocker.patch(
+            "localwispr.transcribe.model_manager._is_model_downloaded_ggml",
+            return_value=True,
+        )
+        from localwispr.transcribe.model_manager import is_model_downloaded
+
+        assert is_model_downloaded("large-v3") is True
+
+    def test_neither_format_exists_returns_false(self, mocker):
+        """When neither CT2 nor GGML exists, returns False."""
+        mocker.patch(
+            "localwispr.transcribe.model_manager.get_active_backend",
+            return_value="faster-whisper",
+        )
+        mocker.patch(
+            "localwispr.transcribe.model_manager._is_model_downloaded_faster_whisper",
+            return_value=False,
+        )
+        mocker.patch(
+            "localwispr.transcribe.model_manager._is_model_downloaded_ggml",
+            return_value=False,
+        )
+        from localwispr.transcribe.model_manager import is_model_downloaded
+
+        assert is_model_downloaded("large-v3") is False
 
 
 class TestTranscriptionResult:
@@ -85,10 +141,14 @@ class TestWhisperTranscriber:
         """Test that model is not loaded until accessed."""
         mocker.patch("localwispr.transcribe.transcriber.get_config", return_value=mock_config)
         mocker.patch("localwispr.transcribe.model_manager.is_model_downloaded", return_value=True)
-        mocker.patch("localwispr.transcribe.model_manager.get_model_path", return_value="/fake/path/model.bin")
-        mock_model = mocker.patch("pywhispercpp.model.Model")
 
-        from localwispr.transcribe.transcriber import WhisperTranscriber
+        from localwispr.transcribe.transcriber import WhisperTranscriber, _FASTER_WHISPER_AVAILABLE
+
+        if _FASTER_WHISPER_AVAILABLE:
+            mock_model = mocker.patch("faster_whisper.WhisperModel")
+        else:
+            mocker.patch("localwispr.transcribe.model_manager.get_model_path", return_value="/fake/path/model.bin")
+            mock_model = mocker.patch("pywhispercpp.model.Model")
 
         transcriber = WhisperTranscriber()
 
@@ -127,17 +187,22 @@ class TestWhisperTranscriber:
         """Test transcribe method returns TranscriptionResult."""
         mocker.patch("localwispr.transcribe.transcriber.get_config", return_value=mock_config)
         mocker.patch("localwispr.transcribe.model_manager.is_model_downloaded", return_value=True)
-        mocker.patch("localwispr.transcribe.model_manager.get_model_path", return_value="/fake/path/model.bin")
 
-        # Mock model - pywhispercpp returns list of segments directly
+        from localwispr.transcribe.transcriber import WhisperTranscriber, _FASTER_WHISPER_AVAILABLE
+
         mock_model = MagicMock()
         segments = [MockSegment(text=" hello world", t0=0, t1=100)]
-        mock_model.transcribe.return_value = segments
 
-        mock_model_class = mocker.patch("pywhispercpp.model.Model")
+        if _FASTER_WHISPER_AVAILABLE:
+            # faster-whisper returns (segments_iter, info)
+            mock_model.transcribe.return_value = (iter(segments), MockTranscriptionInfo())
+            mock_model_class = mocker.patch("faster_whisper.WhisperModel")
+        else:
+            mock_model.transcribe.return_value = segments
+            mocker.patch("localwispr.transcribe.model_manager.get_model_path", return_value="/fake/path/model.bin")
+            mock_model_class = mocker.patch("pywhispercpp.model.Model")
+
         mock_model_class.return_value = mock_model
-
-        from localwispr.transcribe.transcriber import WhisperTranscriber
 
         transcriber = WhisperTranscriber()
         result = transcriber.transcribe(mock_audio_data)
@@ -151,14 +216,20 @@ class TestWhisperTranscriber:
         """Test transcribe passes initial prompt."""
         mocker.patch("localwispr.transcribe.transcriber.get_config", return_value=mock_config)
         mocker.patch("localwispr.transcribe.model_manager.is_model_downloaded", return_value=True)
-        mocker.patch("localwispr.transcribe.model_manager.get_model_path", return_value="/fake/path/model.bin")
+
+        from localwispr.transcribe.transcriber import WhisperTranscriber, _FASTER_WHISPER_AVAILABLE
 
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = []
-        mock_model_class = mocker.patch("pywhispercpp.model.Model")
-        mock_model_class.return_value = mock_model
 
-        from localwispr.transcribe.transcriber import WhisperTranscriber
+        if _FASTER_WHISPER_AVAILABLE:
+            mock_model.transcribe.return_value = (iter([]), MockTranscriptionInfo())
+            mock_model_class = mocker.patch("faster_whisper.WhisperModel")
+        else:
+            mock_model.transcribe.return_value = []
+            mocker.patch("localwispr.transcribe.model_manager.get_model_path", return_value="/fake/path/model.bin")
+            mock_model_class = mocker.patch("pywhispercpp.model.Model")
+
+        mock_model_class.return_value = mock_model
 
         transcriber = WhisperTranscriber()
         # Clear hotwords for this test
@@ -172,21 +243,32 @@ class TestWhisperTranscriber:
         """Test that hotwords are passed to model.transcribe."""
         mocker.patch("localwispr.transcribe.transcriber.get_config", return_value=mock_config)
         mocker.patch("localwispr.transcribe.model_manager.is_model_downloaded", return_value=True)
-        mocker.patch("localwispr.transcribe.model_manager.get_model_path", return_value="/fake/path/model.bin")
+
+        from localwispr.transcribe.transcriber import WhisperTranscriber, _FASTER_WHISPER_AVAILABLE
 
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = []
-        mock_model_class = mocker.patch("pywhispercpp.model.Model")
-        mock_model_class.return_value = mock_model
 
-        from localwispr.transcribe.transcriber import WhisperTranscriber
+        if _FASTER_WHISPER_AVAILABLE:
+            mock_model.transcribe.return_value = (iter([]), MockTranscriptionInfo())
+            mock_model_class = mocker.patch("faster_whisper.WhisperModel")
+        else:
+            mock_model.transcribe.return_value = []
+            mocker.patch("localwispr.transcribe.model_manager.get_model_path", return_value="/fake/path/model.bin")
+            mock_model_class = mocker.patch("pywhispercpp.model.Model")
+
+        mock_model_class.return_value = mock_model
 
         transcriber = WhisperTranscriber()
         transcriber.transcribe(mock_audio_data)
 
         call_kwargs = mock_model.transcribe.call_args[1]
-        assert "initial_prompt" in call_kwargs
-        assert "LocalWispr pytest" == call_kwargs["initial_prompt"]
+        if _FASTER_WHISPER_AVAILABLE:
+            # faster-whisper gets hotwords as a separate kwarg
+            assert call_kwargs.get("hotwords") == "LocalWispr pytest"
+            assert call_kwargs.get("initial_prompt") == "LocalWispr pytest"
+        else:
+            assert "initial_prompt" in call_kwargs
+            assert "LocalWispr pytest" == call_kwargs["initial_prompt"]
 
 
 class TestTranscribeWithContext:
@@ -313,3 +395,81 @@ class TestTranscribeRecording:
 
         mock_recorder.get_whisper_audio.assert_called_once()
         assert result.text == "test"
+
+
+class TestCudaDllLoading:
+    """Tests that CUDA DLLs are findable for GPU inference."""
+
+    def test_cublas_dll_exists_in_nvidia_package(self):
+        """cublas64_12.dll must exist in the nvidia.cublas package."""
+        import importlib.util
+        import os
+
+        spec = importlib.util.find_spec("nvidia.cublas")
+        if not spec or not spec.submodule_search_locations:
+            pytest.skip("nvidia.cublas not installed")
+
+        pkg_dir = list(spec.submodule_search_locations)[0]
+        dll_path = os.path.join(pkg_dir, "bin", "cublas64_12.dll")
+        assert os.path.isfile(dll_path), f"cublas64_12.dll not at {dll_path}"
+
+    def test_cublas_dll_loadable_via_ctypes(self):
+        """cublas64_12.dll must be loadable via ctypes when directory is on PATH."""
+        import ctypes
+        import importlib.util
+        import os
+
+        spec = importlib.util.find_spec("nvidia.cublas")
+        if not spec or not spec.submodule_search_locations:
+            pytest.skip("nvidia.cublas not installed")
+
+        pkg_dir = list(spec.submodule_search_locations)[0]
+        dll_path = os.path.join(pkg_dir, "bin", "cublas64_12.dll")
+        if not os.path.isfile(dll_path):
+            pytest.skip("cublas64_12.dll not found")
+
+        lib = ctypes.WinDLL(dll_path)
+        assert lib is not None
+
+    def test_cudnn_dll_exists_in_ctranslate2(self):
+        """cudnn64_9.dll must exist in the ctranslate2 package."""
+        import os
+        import pathlib
+
+        try:
+            import ctranslate2
+        except ImportError:
+            pytest.skip("ctranslate2 not installed")
+
+        ct2_dir = pathlib.Path(ctranslate2.__file__).parent
+        dll_path = ct2_dir / "cudnn64_9.dll"
+        assert dll_path.is_file(), f"cudnn64_9.dll not at {dll_path}"
+
+    def test_ctranslate2_finds_cublas_when_on_path(self):
+        """ctranslate2 can load cublas when nvidia.cublas/bin is on PATH."""
+        import importlib.util
+        import os
+
+        spec = importlib.util.find_spec("nvidia.cublas")
+        if not spec or not spec.submodule_search_locations:
+            pytest.skip("nvidia.cublas not installed")
+
+        pkg_dir = list(spec.submodule_search_locations)[0]
+        bin_dir = os.path.join(pkg_dir, "bin")
+
+        # Prepend to PATH (same approach as __main__.py uses for frozen builds)
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = bin_dir + os.pathsep + old_path
+        try:
+            import ctranslate2
+            # get_cuda_device_count uses cublas internally — if it doesn't
+            # raise RuntimeError about missing DLLs, the DLLs are loaded
+            try:
+                count = ctranslate2.get_cuda_device_count()
+                assert count >= 0  # 0 is fine (no GPU), just no DLL error
+            except RuntimeError as e:
+                if "cublas" in str(e).lower() or "library" in str(e).lower():
+                    pytest.fail(f"cublas DLL still not found even with PATH set: {e}")
+                raise
+        finally:
+            os.environ["PATH"] = old_path

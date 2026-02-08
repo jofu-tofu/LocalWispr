@@ -9,6 +9,10 @@ from __future__ import annotations
 import threading
 from unittest.mock import MagicMock
 
+import pytest
+
+pytestmark = pytest.mark.gui
+
 
 
 class TestTrayState:
@@ -398,7 +402,7 @@ class TestTrayAppAudioLevel:
         from localwispr.ui.tray import TrayApp
 
         app = TrayApp()
-        app._recorder = mock_recorder
+        app._pipeline._recorder = mock_recorder
 
         level = app._get_current_audio_level()
 

@@ -1,8 +1,21 @@
 """Entry point for LocalWispr."""
 
 import argparse
+import os
 import platform
 import sys
+
+# Register CUDA DLL directories for frozen PyInstaller builds.
+# ctranslate2's C++ code uses LoadLibrary("cublas64_12.dll") which searches PATH
+# but NOT directories added via os.add_dll_directory(). Prepend to PATH instead.
+if getattr(sys, 'frozen', False):
+    _dll_dirs = [
+        os.path.join(sys._MEIPASS, 'nvidia', 'cublas', 'bin'),
+        os.path.join(sys._MEIPASS, 'ctranslate2'),
+    ]
+    _new = os.pathsep.join(d for d in _dll_dirs if os.path.isdir(d))
+    if _new:
+        os.environ['PATH'] = _new + os.pathsep + os.environ.get('PATH', '')
 
 from localwispr import __version__
 from localwispr.config import get_config

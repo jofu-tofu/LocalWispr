@@ -37,6 +37,25 @@ try:
 except Exception:
     pass
 
+# Collect faster-whisper assets (Silero VAD ONNX model needed for vad_filter)
+try:
+    datas += collect_data_files('faster_whisper')
+except Exception:
+    pass
+
+# Collect nvidia cuBLAS DLLs for CUDA inference (cublas64_12.dll, cublasLt64_12.dll)
+try:
+    datas += collect_data_files('nvidia.cublas')
+except Exception:
+    pass
+
+# Collect ctranslate2 dynamic libs (includes cudnn64_9.dll)
+try:
+    from PyInstaller.utils.hooks import collect_dynamic_libs
+    binaries = collect_dynamic_libs('ctranslate2')
+except Exception:
+    binaries = []
+
 # Collect setuptools/jaraco data files (needed for pkg_resources)
 try:
     datas += collect_data_files('setuptools._vendor.jaraco.text')
@@ -64,15 +83,12 @@ hiddenimports = [
     'winotify',
     # PIL/Pillow
     'PIL._tkinter_finder',
-    # torch for Silero VAD
-    'torch',
-    'torchaudio',
 ]
 
 a = Analysis(
     [str(ROOT / 'localwispr' / '__main__.py')],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

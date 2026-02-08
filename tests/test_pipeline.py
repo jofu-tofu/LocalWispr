@@ -728,7 +728,7 @@ class TestAsyncTranscription:
         assert pipeline.is_current_generation(gen2) is False
 
     def test_invalidate_transcriber_forces_reload(
-        self, mocker, reset_mode_manager, mock_model_downloaded
+        self, mocker, reset_mode_manager, mock_model_downloaded, sync_executor
     ):
         """Test that invalidate + clear_model_preload causes model to be reloaded."""
         mock_transcriber = MagicMock()
@@ -748,7 +748,7 @@ class TestAsyncTranscription:
         from localwispr.pipeline import RecordingPipeline
 
         mode_manager = ModeManager()
-        pipeline = RecordingPipeline(mode_manager=mode_manager)
+        pipeline = RecordingPipeline(mode_manager=mode_manager, executor=sync_executor)
 
         # Initial preload
         pipeline.preload_model_async()
@@ -758,12 +758,26 @@ class TestAsyncTranscription:
 
         # Invalidate and clear — this is the settings-change path
         pipeline.invalidate_transcriber()
+
+        # Patch preload_model_async so clear_model_preload doesn't auto-fire
+        # This lets us assert the event was cleared before re-preload completes
+        mocker.patch.object(pipeline, "preload_model_async")
         pipeline.clear_model_preload()
 
         # After clear_model_preload, model is no longer ready (event cleared)
         assert pipeline.is_model_ready is False
 
-        # Wait for new preload to complete (clear_model_preload triggers preload_model_async)
+        # Now restore and manually trigger preload
+        mocker.stopall()
+        mocker.patch(
+            "localwispr.transcribe.model_manager.is_model_downloaded",
+            return_value=True,
+        )
+        mocker.patch(
+            "localwispr.transcribe.transcriber.WhisperTranscriber",
+            side_effect=mock_init,
+        )
+        pipeline.preload_model_async()
         pipeline._model_preload_complete.wait(timeout=2.0)
 
         assert pipeline.is_model_ready is True

@@ -12,10 +12,11 @@ from dataclasses import dataclass
 
 @dataclass
 class MockSegment:
-    """Mock pywhispercpp transcription segment.
+    """Mock transcription segment compatible with both backends.
 
-    pywhispercpp Segment has: t0, t1, text, probability
-    where t0 and t1 are in centiseconds (1/100th of a second).
+    pywhispercpp Segment has: t0, t1, text (centiseconds)
+    faster-whisper Segment has: start, end, text (seconds)
+    This class supports both via properties.
     """
 
     text: str
@@ -23,7 +24,6 @@ class MockSegment:
     t1: int = 100  # End time in centiseconds
     probability: float = 0.95
 
-    # Backwards compatibility for tests using start/end
     @property
     def start(self) -> float:
         return self.t0 / 100.0
@@ -35,7 +35,7 @@ class MockSegment:
 
 @dataclass
 class MockTranscriptionInfo:
-    """Mock Whisper transcription info."""
+    """Mock Whisper transcription info (faster-whisper info object)."""
 
     language: str = "en"
     language_probability: float = 0.99

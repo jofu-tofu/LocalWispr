@@ -435,6 +435,13 @@ class RecordingPipeline:
             Audio array if successful, None if no audio or not recording.
         """
         with self._recorder_lock:
+            recorder_none = self._recorder is None
+            recorder_recording = False if recorder_none else self._recorder.is_recording
+            logger.debug(
+                "recording: get_audio recorder_none=%s is_recording=%s",
+                recorder_none,
+                recorder_recording,
+            )
             if self._recorder is None or not self._recorder.is_recording:
                 logger.warning("recording: not recording, skipping transcription")
                 return None
@@ -442,8 +449,17 @@ class RecordingPipeline:
 
         # Check if we have audio
         audio_duration = len(audio) / 16000.0
+        logger.debug(
+            "recording: audio shape=%s dtype=%s duration=%.2fs min=%.4f max=%.4f mean_abs=%.4f",
+            audio.shape,
+            audio.dtype,
+            audio_duration,
+            float(np.min(audio)) if len(audio) > 0 else 0.0,
+            float(np.max(audio)) if len(audio) > 0 else 0.0,
+            float(np.mean(np.abs(audio))) if len(audio) > 0 else 0.0,
+        )
         if audio_duration < 0.1:
-            logger.warning("recording: no audio captured")
+            logger.warning("recording: no audio captured (duration=%.3fs)", audio_duration)
             return None
 
         logger.debug("recording: audio captured, duration_s=%.2f", audio_duration)
@@ -539,13 +555,15 @@ class RecordingPipeline:
         if self._mode_manager.is_manual_override:
             # Use mode's prompt directly
             initial_prompt = get_mode_prompt()
-            result = transcriber.transcribe(audio, initial_prompt=initial_prompt)
             logger.debug(
-                "transcription: using mode prompt, mode=%s",
+                "transcription: manual override mode=%s prompt_len=%d",
                 self._mode_manager.current_mode.name,
+                len(initial_prompt) if initial_prompt else 0,
             )
+            result = transcriber.transcribe(audio, initial_prompt=initial_prompt)
         else:
             # Use context detection for automatic mode selection
+            logger.debug("transcription: using context detection")
             if self._detector is None:
                 from localwispr.transcribe.context import ContextDetector
 
@@ -557,8 +575,9 @@ class RecordingPipeline:
 
         inference_time_ms = int(result.inference_time * 1000)
         logger.info(
-            "transcription: complete, duration_ms=%d, was_retranscribed=%s",
+            "transcription: complete, duration_ms=%d, text_len=%d, was_retranscribed=%s",
             inference_time_ms,
+            len(result.text),
             result.was_retranscribed,
         )
         return result
@@ -679,6 +698,12 @@ class RecordingPipeline:
         result: PipelineResult | None = None
         start_time = time.time()
 
+        logger.debug(
+            "transcribe_bg: entering gen=%d audio_shape=%s",
+            generation,
+            audio.shape,
+        )
+
         try:
             # Check if shutting down or stale
             with self._generation_lock:
@@ -694,8 +719,13 @@ class RecordingPipeline:
                     return
 
             # Wait for model
+            logger.debug(
+                "transcribe_bg: model_preload_complete=%s",
+                self._model_preload_complete.is_set(),
+            )
             if not self._wait_for_model():
                 result = PipelineResult(success=False, error="Model load timeout")
+                logger.warning("transcribe_bg: model load timeout")
             else:
                 # Get transcriber
                 transcriber = self._get_transcriber()
@@ -706,14 +736,27 @@ class RecordingPipeline:
                             success=False,
                             error="Model not downloaded. Open Settings to download.",
                         )
+                        logger.warning("transcribe_bg: model not downloaded")
                     else:
                         result = PipelineResult(
                             success=False,
                             error="Failed to initialize transcriber",
                         )
+                        logger.warning("transcribe_bg: transcriber init failed")
                 else:
+                    logger.debug(
+                        "transcribe_bg: transcriber ready backend=%s model=%s device=%s",
+                        transcriber.backend,
+                        transcriber.model_name,
+                        transcriber.device,
+                    )
                     # Perform transcription (uses existing _perform_transcription)
                     trans_result = self._perform_transcription(audio, transcriber)
+                    logger.debug(
+                        "transcribe_bg: result text_len=%d preview=%r",
+                        len(trans_result.text),
+                        trans_result.text[:100] if trans_result.text else "",
+                    )
                     result = PipelineResult(
                         success=True,
                         text=trans_result.text,

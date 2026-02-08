@@ -517,8 +517,7 @@ class ModelManagerMixin:
         try:
             messagebox.showerror(
                 "Download Failed",
-                f"Failed to download model '{model_name}':\n\n{error}\n\n"
-                "Please check your internet connection and try again.",
+                f"Failed to download model:\n\n{error}",
             )
         except tk.TclError:
             pass

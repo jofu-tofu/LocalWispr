@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.e2e
+
 
 class TestApplicationSmoke:
     """Smoke tests for complete application workflows."""

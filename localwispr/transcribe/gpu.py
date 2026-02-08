@@ -10,16 +10,22 @@ logger = logging.getLogger(__name__)
 def check_cuda_available() -> bool:
     """Check if CUDA is available for inference.
 
+    Uses CTranslate2 (has its own CUDA runtime, used by faster-whisper).
+
     Returns:
         True if CUDA is available, False otherwise.
     """
     try:
-        import torch
+        import ctranslate2
 
-        return torch.cuda.is_available()
+        if ctranslate2.get_cuda_device_count() > 0:
+            return True
     except ImportError:
-        logger.warning("gpu: torch not available for CUDA detection")
-        return False
+        logger.warning("gpu: ctranslate2 not available for CUDA detection")
+    except Exception as e:
+        logger.debug("gpu: ctranslate2 CUDA check failed: %s", e)
+
+    return False
 
 
 def get_gpu_info() -> dict:
@@ -41,25 +47,16 @@ def get_gpu_info() -> dict:
 
     if cuda_available:
         try:
-            import torch
+            import ctranslate2
 
-            info["device_count"] = torch.cuda.device_count()
-            for i in range(info["device_count"]):
-                device_props = torch.cuda.get_device_properties(i)
-                info["devices"].append({
-                    "index": i,
-                    "name": device_props.name,
-                    "total_memory_gb": round(
-                        device_props.total_memory / (1024**3), 2
-                    ),
-                    "compute_capability": f"{device_props.major}.{device_props.minor}",
-                })
-        except Exception as e:
-            logger.warning("gpu: error getting GPU details: %s", e)
+            info["device_count"] = ctranslate2.get_cuda_device_count()
+        except Exception:
             info["device_count"] = 1
+
+        for i in range(info["device_count"]):
             info["devices"].append({
-                "index": 0,
-                "name": "CUDA Device (details unavailable)",
+                "index": i,
+                "name": f"CUDA Device {i}",
                 "total_memory_gb": None,
                 "compute_capability": None,
             })

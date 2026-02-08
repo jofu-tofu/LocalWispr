@@ -6,16 +6,23 @@ REM   build.bat stable    - Build stable version (hidden console)
 REM   build.bat test      - Build test version (visible console)
 REM   build.bat both      - Build both versions
 REM   build.bat installer - Build stable + Windows installer
+REM   build.bat test quick  - Build test, skip tests
+REM   build.bat stable quick - Build stable, skip tests
+REM
 
 setlocal enabledelayedexpansion
 
-REM Parse argument
+REM Parse arguments
 set "BUILD_TARGET=%~1"
 if "%BUILD_TARGET%"=="" set "BUILD_TARGET=stable"
+set "SKIP_TESTS=0"
+if /i "%~2"=="quick" set "SKIP_TESTS=1"
+if /i "%~2"=="--skip-tests" set "SKIP_TESTS=1"
 
 echo ========================================
 echo LocalWispr Build System
 echo Target: %BUILD_TARGET%
+if "%SKIP_TESTS%"=="1" echo Tests: SKIPPED (quick mode)
 echo ========================================
 
 REM Use venv Python
@@ -40,30 +47,36 @@ if errorlevel 1 (
     uv pip install pyinstaller>=6.0
 )
 
-echo.
-echo [1/3] Running unit and integration tests...
-echo ----------------------------------------
-%PYTHON% -m pytest tests/ -v --ignore=tests/gui -x
-if errorlevel 1 (
+if "%SKIP_TESTS%"=="1" (
     echo.
-    echo ========================================
-    echo TESTS FAILED - Build aborted.
-    echo ========================================
+    echo [1/3] Skipping tests (quick mode)...
+    echo ----------------------------------------
+) else (
     echo.
-    echo Fix the failing tests before building.
-    echo.
-    echo Tips:
-    echo   - Run "pytest tests/ -v" to see all failures
-    echo   - Run "pytest tests/test_MODULE.py -v" to test specific module
-    echo   - GUI tests are excluded from build gate (run manually with: pytest tests/gui/ -v)
-    echo.
-    exit /b 1
-)
+    echo [1/3] Running unit and integration tests...
+    echo ----------------------------------------
+    %PYTHON% -m pytest tests/ -v --ignore=tests/gui -x
+    if errorlevel 1 (
+        echo.
+        echo ========================================
+        echo TESTS FAILED - Build aborted.
+        echo ========================================
+        echo.
+        echo Fix the failing tests before building.
+        echo.
+        echo Tips:
+        echo   - Run "pytest tests/ -v" to see all failures
+        echo   - Run "pytest tests/test_MODULE.py -v" to test specific module
+        echo   - GUI tests are excluded from build gate ^(run manually with: pytest tests/gui/ -v^)
+        echo.
+        exit /b 1
+    )
 
-echo.
-echo ----------------------------------------
-echo Tests passed!
-echo ----------------------------------------
+    echo.
+    echo ----------------------------------------
+    echo Tests passed!
+    echo ----------------------------------------
+)
 
 REM Route to appropriate build function
 if /i "%BUILD_TARGET%"=="both" (

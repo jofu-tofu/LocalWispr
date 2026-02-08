@@ -10,8 +10,45 @@ import time
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
-from tests.helpers import MockSegment
+from tests.helpers import MockSegment, MockTranscriptionInfo
+
+# Detect which backend is active for test mocking
+from localwispr.transcribe.transcriber import _FASTER_WHISPER_AVAILABLE
+
+pytestmark = pytest.mark.integration
+
+
+def _mock_whisper_backend(mocker, mock_model=None, segments=None, side_effect=None):
+    """Mock the active whisper backend consistently.
+
+    Args:
+        mocker: pytest mocker fixture.
+        mock_model: Optional pre-configured mock model.
+        segments: Optional list of MockSegment for transcribe return.
+        side_effect: Optional side_effect for the model class constructor.
+
+    Returns:
+        The mock model class.
+    """
+    if mock_model is None:
+        mock_model = MagicMock()
+
+    if segments is not None:
+        if _FASTER_WHISPER_AVAILABLE:
+            mock_model.transcribe.side_effect = lambda *a, **kw: (iter(segments), MockTranscriptionInfo())
+        else:
+            mock_model.transcribe.return_value = segments
+
+    if _FASTER_WHISPER_AVAILABLE:
+        if side_effect is not None:
+            return mocker.patch("faster_whisper.WhisperModel", side_effect=side_effect)
+        return mocker.patch("faster_whisper.WhisperModel", return_value=mock_model)
+    else:
+        if side_effect is not None:
+            return mocker.patch("pywhispercpp.model.Model", side_effect=side_effect)
+        return mocker.patch("pywhispercpp.model.Model", return_value=mock_model)
 
 
 class TestContextDetectionWorkflow:
@@ -299,7 +336,7 @@ class TestModelLoadingWorkflows:
     ):
         """User records with no model -> gets 'not downloaded' error in < 1 second."""
         mocker.patch("localwispr.config.get_config", return_value=mock_config)
-        mocker.patch("pywhispercpp.model.Model")
+        _mock_whisper_backend(mocker)
         mocker.patch("localwispr.audio.recorder.sd")
 
         # models_in_tmp() with no arg = no model file = not downloaded
@@ -341,11 +378,9 @@ class TestModelLoadingWorkflows:
         # Create dummy model file so is_model_downloaded returns True
         models_in_tmp("tiny")
 
-        # Mock pywhispercpp.model.Model to return transcription segments
-        mock_model = MagicMock()
+        # Mock whisper backend to return transcription segments
         segments = [MockSegment(text=" Hello world transcription.")]
-        mock_model.transcribe.return_value = segments
-        mocker.patch("pywhispercpp.model.Model", return_value=mock_model)
+        _mock_whisper_backend(mocker, segments=segments)
 
         mocker.patch("localwispr.audio.recorder.sd")
 
@@ -384,11 +419,11 @@ class TestModelLoadingWorkflows:
         # First Model() call raises (during preload), second succeeds (during sync fallback)
         mock_model = MagicMock()
         segments = [MockSegment(text=" Recovery transcription.")]
-        mock_model.transcribe.return_value = segments
-        mocker.patch(
-            "pywhispercpp.model.Model",
-            side_effect=[RuntimeError("corrupted model"), mock_model],
-        )
+        if _FASTER_WHISPER_AVAILABLE:
+            mock_model.transcribe.return_value = (iter(segments), MockTranscriptionInfo())
+        else:
+            mock_model.transcribe.return_value = segments
+        _mock_whisper_backend(mocker, side_effect=[RuntimeError("corrupted model"), mock_model])
 
         mocker.patch("localwispr.audio.recorder.sd")
 
@@ -423,7 +458,7 @@ class TestModelLoadingWorkflows:
     ):
         """model_preload_state returns correct values at each lifecycle stage."""
         mocker.patch("localwispr.config.get_config", return_value=mock_config)
-        mocker.patch("pywhispercpp.model.Model")
+        _mock_whisper_backend(mocker)
 
         from localwispr.modes import ModeManager
         from localwispr.pipeline import RecordingPipeline
@@ -446,7 +481,7 @@ class TestModelLoadingWorkflows:
     ):
         """get_model_name() returns user-facing strings at correct stages."""
         mocker.patch("localwispr.config.get_config", return_value=mock_config)
-        mocker.patch("pywhispercpp.model.Model")
+        _mock_whisper_backend(mocker)
 
         from localwispr.modes import ModeManager
         from localwispr.pipeline import RecordingPipeline
@@ -473,10 +508,8 @@ class TestModelLoadingWorkflows:
 
         models_in_tmp("tiny")
 
-        mock_model = MagicMock()
         segments = [MockSegment(text=" Async test result.")]
-        mock_model.transcribe.return_value = segments
-        mocker.patch("pywhispercpp.model.Model", return_value=mock_model)
+        _mock_whisper_backend(mocker, segments=segments)
 
         mocker.patch("localwispr.audio.recorder.sd")
 
@@ -524,7 +557,7 @@ class TestModelLoadingWorkflows:
     ):
         """Pressing hotkey with no model -> overlay shows error, no recording."""
         mocker.patch("localwispr.config.get_config", return_value=mock_config)
-        mocker.patch("pywhispercpp.model.Model")
+        _mock_whisper_backend(mocker)
 
         # No model file
         models_in_tmp()

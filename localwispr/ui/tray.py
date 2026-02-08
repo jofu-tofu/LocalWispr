@@ -694,6 +694,13 @@ class TrayApp:
         Args:
             result: Transcription result from pipeline.
         """
+        logger.debug(
+            "tray: handle_result success=%s error=%r text_len=%d preview=%r",
+            result.success,
+            result.error or "",
+            len(result.text),
+            result.text[:50] if result.text else "",
+        )
         if result.success:
             self._output_result(result)
         else:
@@ -707,6 +714,11 @@ class TrayApp:
         """
         from localwispr.config import get_config
         from localwispr.output import output_transcription
+
+        if not result.text:
+            logger.warning("tray: output_result called with EMPTY text")
+
+        logger.debug("tray: output_result text_len=%d", len(result.text))
 
         config = get_config()
         auto_paste = config["output"]["auto_paste"]
@@ -730,6 +742,7 @@ class TrayApp:
 
     def _finish_transcription(self) -> None:
         """Finish transcription and reset state."""
+        logger.debug("tray: finish_transcription — resetting to IDLE")
         self.update_state(TrayState.IDLE)
         self._overlay.hide()
 

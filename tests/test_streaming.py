@@ -432,6 +432,7 @@ class TestCoordinateSystemFixes:
         )
         return mock
 
+    @pytest.mark.slow
     def test_vad_segments_produce_transcription_on_finalize(self, mock_transcriber, mocker):
         """VAD segments are correctly translated and transcribed on finalize."""
         from localwispr.transcribe.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
@@ -463,7 +464,7 @@ class TestCoordinateSystemFixes:
         streamer.process_chunk(chunk2)
 
         # Allow time for background transcription thread to process the segment
-        time.sleep(0.5)
+        time.sleep(0.1)
 
         # Finalize should produce a result with transcribed text
         result = streamer.finalize()
@@ -473,6 +474,7 @@ class TestCoordinateSystemFixes:
         # Transcriber was called at least once (for VAD segment and/or finalize)
         assert mock_transcriber.transcribe.call_count >= 1
 
+    @pytest.mark.slow
     def test_multiple_vad_segments_all_transcribed(self, mock_transcriber, mocker):
         """Multiple VAD segments are all processed and produce combined transcription."""
         from localwispr.transcribe.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
@@ -522,7 +524,7 @@ class TestCoordinateSystemFixes:
             streamer.process_chunk(chunk)
             time.sleep(0.05)
 
-        time.sleep(0.5)  # Allow background processing
+        time.sleep(0.1)  # Allow background processing
 
         result = streamer.finalize()
 
@@ -631,6 +633,7 @@ class TestCoordinateSystemFixes:
 
         streamer.finalize()
 
+    @pytest.mark.slow
     def test_streaming_multi_segment_end_to_end(self, mock_transcriber, mocker):
         """Full integration: Multiple VAD segments transcribe correctly."""
         from localwispr.transcribe.streaming import SpeechSegment, StreamingConfig, StreamingTranscriber
@@ -688,7 +691,7 @@ class TestCoordinateSystemFixes:
             time.sleep(0.05)  # Small delay to allow background processing
 
         # Give time for transcription thread to process
-        time.sleep(0.5)
+        time.sleep(0.1)
 
         # Finalize
         result = streamer.finalize()

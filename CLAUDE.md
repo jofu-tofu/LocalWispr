@@ -94,6 +94,24 @@ Solution: Use `build.bat test`, not direct PyInstaller commands
 **Only ask user to close EXE when:**
 - The locked folder matches the target version (Test build + Test folder locked)
 
+### Build from Claude Code Shell
+
+`build.bat test` doesn't execute correctly via `cmd.exe //c "build.bat test"` — the `setlocal enabledelayedexpansion` and subroutine pattern causes silent failures. **Workaround:**
+
+1. Write a temp `.bat` file that sets `BUILD_VARIANT=test` and calls PyInstaller directly
+2. Run it via `cmd.exe //c "path\to\temp.bat"`
+3. Delete the temp file after
+
+```bat
+@echo off
+set BUILD_VARIANT=test
+cd /d C:\Users\fujos\LocalWispr
+.venv\Scripts\python.exe -m PyInstaller --noconfirm localwispr.spec
+copy config-test.toml dist\LocalWispr-Test\config-defaults.toml
+```
+
+**Do NOT** try `set BUILD_VARIANT=test && pyinstaller ...` in a single `cmd.exe //c` — the env var won't propagate correctly through `&&` chaining.
+
 ---
 
 ## Dual-Version System

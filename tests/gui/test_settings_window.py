@@ -11,6 +11,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
+pytestmark = pytest.mark.gui
+
 
 class TestSettingsWindowCreation:
     """Tests for TkinterSettingsView instantiation and setup."""

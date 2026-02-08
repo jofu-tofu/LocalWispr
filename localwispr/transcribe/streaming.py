@@ -284,32 +284,68 @@ class VADProcessor:
         self._processed_samples = 0
 
     def _load_model(self):
-        """Load Silero VAD model."""
-        import torch
+        """Load Silero VAD ONNX model from faster-whisper's bundled assets."""
+        import os
 
-        model, utils = torch.hub.load(
-            repo_or_dir="snakers4/silero-vad",
-            model="silero_vad",
-            force_reload=False,
-            trust_repo=True,
+        import onnxruntime
+        from faster_whisper.vad import get_assets_path
+
+        path = os.path.join(get_assets_path(), "silero_vad_v6.onnx")
+        opts = onnxruntime.SessionOptions()
+        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = 1
+        opts.enable_cpu_mem_arena = False
+        opts.log_severity_level = 4
+        return onnxruntime.InferenceSession(
+            path,
+            providers=["CPUExecutionProvider"],
+            sess_options=opts,
         )
-        return model
 
     @property
     def model(self):
-        """Get VAD model, loading if necessary."""
+        """Get VAD ONNX session, loading if necessary."""
         with self._model_lock:
             if self._model is None:
-                logger.info("streaming: loading Silero VAD model")
+                logger.info("streaming: loading Silero VAD model (ONNX)")
                 self._model = self._load_model()
+                self._reset_hidden_state()
                 logger.info("streaming: Silero VAD model loaded")
             return self._model
+
+    def _reset_hidden_state(self):
+        """Reset ONNX hidden state for stateful inference."""
+        self._h = np.zeros((1, 1, 128), dtype=np.float32)
+        self._c = np.zeros((1, 1, 128), dtype=np.float32)
+
+    def _infer_window(self, window: np.ndarray) -> float:
+        """Run VAD inference on a single 512-sample window.
+
+        Maintains hidden state between calls for streaming accuracy.
+
+        Args:
+            window: 512-sample float32 audio array.
+
+        Returns:
+            Speech probability (0.0-1.0).
+        """
+        context_size = 64
+        context = np.zeros(context_size, dtype=np.float32)
+        input_data = np.concatenate([context, window]).reshape(1, -1)
+
+        output, self._h, self._c = self.model.run(
+            None,
+            {"input": input_data, "h": self._h, "c": self._c},
+        )
+        return float(output[0])
 
     def reset(self) -> None:
         """Reset VAD state for new recording."""
         self._speech_start = None
         self._silence_start = None
         self._processed_samples = 0
+        if self._model is not None:
+            self._reset_hidden_state()
 
     def process(self, audio: np.ndarray) -> list[SpeechSegment]:
         """Process audio and detect speech segments.
@@ -320,8 +356,6 @@ class VADProcessor:
         Returns:
             List of detected speech segments with final silence.
         """
-        import torch
-
         if audio.size == 0:
             return []
 
@@ -334,12 +368,8 @@ class VADProcessor:
         while start_idx + window_size <= len(audio):
             window = audio[start_idx : start_idx + window_size]
 
-            # Convert to torch tensor
-            tensor = torch.from_numpy(window).float()
-
-            # Get speech probability
-            with torch.no_grad():
-                prob = self.model(tensor, VAD_SAMPLE_RATE).item()
+            # Get speech probability via ONNX inference
+            prob = self._infer_window(window)
 
             is_speech = prob >= self._threshold
             current_sample = self._processed_samples + start_idx
@@ -395,17 +425,12 @@ class VADProcessor:
         Returns:
             True if speech detected above threshold.
         """
-        import torch
-
         if audio.size < 512:
             return False
 
         # Use first 512 samples
         window = audio[:512]
-        tensor = torch.from_numpy(window).float()
-
-        with torch.no_grad():
-            prob = self.model(tensor, VAD_SAMPLE_RATE).item()
+        prob = self._infer_window(window)
 
         return prob >= self._threshold
 

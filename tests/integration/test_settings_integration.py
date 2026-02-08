@@ -17,6 +17,8 @@ import pytest
 from localwispr.config import clear_config_cache, get_config, reload_config, save_config
 from localwispr.settings.manager import get_settings_manager
 
+pytestmark = pytest.mark.integration
+
 
 class TestCriticalSettingsPropagation:
     """Tests for the top 3 critical settings that fail to propagate.

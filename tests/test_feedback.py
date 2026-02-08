@@ -73,7 +73,7 @@ class TestPlayToneAsync:
         _play_tone_async(440, 100)
 
         import time
-        time.sleep(0.1)
+        time.sleep(0.02)
 
 
 class TestPlayStartBeep:
@@ -88,7 +88,7 @@ class TestPlayStartBeep:
         play_start_beep()
 
         import time
-        time.sleep(0.1)
+        time.sleep(0.02)
 
         # Audio reached the system boundary (sd.play)
         mock_sd.play.assert_called_once()
@@ -108,7 +108,7 @@ class TestPlayStopBeep:
         play_stop_beep()
 
         import time
-        time.sleep(0.1)
+        time.sleep(0.02)
 
         # Audio reached the system boundary (sd.play)
         mock_sd.play.assert_called_once()
@@ -129,14 +129,14 @@ class TestStartAndStopBeepsDiffer:
 
         # Capture start beep audio
         play_start_beep()
-        time.sleep(0.1)
+        time.sleep(0.02)
         start_audio = mock_sd.play.call_args[0][0].copy()
 
         mock_sd.reset_mock()
 
         # Capture stop beep audio
         play_stop_beep()
-        time.sleep(0.1)
+        time.sleep(0.02)
         stop_audio = mock_sd.play.call_args[0][0].copy()
 
         # Start and stop beeps should produce different audio

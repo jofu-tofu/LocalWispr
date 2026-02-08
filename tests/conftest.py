@@ -274,6 +274,9 @@ def sync_executor():
 def models_in_tmp(tmp_path, mocker):
     """Point model directory to tmp_path for controlled file system.
 
+    Forces pywhispercpp backend for GGML file-based model detection,
+    since tmp_path won't have a HuggingFace Hub cache.
+
     Usage:
         models_in_tmp()  # model NOT downloaded (empty dir)
         models_in_tmp("tiny")  # create dummy model file
@@ -281,6 +284,11 @@ def models_in_tmp(tmp_path, mocker):
     mocker.patch(
         "localwispr.transcribe.model_manager.get_models_dir",
         return_value=tmp_path,
+    )
+    # Force pywhispercpp backend for model checks so GGML files in tmp_path work
+    mocker.patch(
+        "localwispr.transcribe.model_manager.get_active_backend",
+        return_value="pywhispercpp",
     )
 
     def _create_model(model_name=None):
@@ -475,15 +483,25 @@ vad_threshold = 0.5
     mock_sd.InputStream.return_value = mock_stream
     mocks["sounddevice"] = mock_sd
 
-    # Mock pywhispercpp Model
-    # NOTE: Patches pywhispercpp.model.Model at SOURCE, not usage location.
-    # This is correct: transcribe.py uses TYPE_CHECKING guard, meaning
-    # Model is only imported inside methods for lazy loading. Source-level
-    # patching is required for lazy imports - usage location doesn't exist yet.
+    # Mock the active transcription backend
+    # Detect which backend the transcriber will use
+    from localwispr.transcribe.transcriber import _FASTER_WHISPER_AVAILABLE
+
     mock_whisper_model = MagicMock()
     segments = [MockSegment(text="test transcription")]
-    mock_whisper_model.transcribe.return_value = segments
-    mock_whisper_class = mocker.patch("pywhispercpp.model.Model")
+
+    if _FASTER_WHISPER_AVAILABLE:
+        # faster-whisper returns (segments_iter, info) tuple
+        mock_whisper_model.transcribe.return_value = (
+            iter(segments),
+            MockTranscriptionInfo(),
+        )
+        mock_whisper_class = mocker.patch("faster_whisper.WhisperModel")
+    else:
+        # pywhispercpp returns list of segments directly
+        mock_whisper_model.transcribe.return_value = segments
+        mock_whisper_class = mocker.patch("pywhispercpp.model.Model")
+
     mock_whisper_class.return_value = mock_whisper_model
     mocks["whisper"] = mock_whisper_class
 

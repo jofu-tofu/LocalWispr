@@ -1,6 +1,8 @@
 """Whisper transcription module for LocalWispr.
 
-Uses pywhispercpp (whisper.cpp Python bindings) for fast, lightweight transcription.
+Supports two backends:
+- faster-whisper (CTranslate2): Primary backend with native CUDA/GPU support.
+- pywhispercpp (whisper.cpp): CPU fallback.
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ import os
 import tempfile
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from scipy.io import wavfile
@@ -20,13 +22,22 @@ from localwispr.transcribe.context import ContextDetector, ContextType
 from localwispr.prompts import load_prompt
 
 if TYPE_CHECKING:
-    from pywhispercpp.model import Model as WhisperModel
     from localwispr.audio import AudioRecorder
 
 logger = logging.getLogger(__name__)
 
 # Whisper expects 16kHz audio
 WHISPER_SAMPLE_RATE = 16000
+
+# Backend detection: prefer faster-whisper (CTranslate2 with GPU support)
+_FASTER_WHISPER_AVAILABLE = False
+try:
+    from faster_whisper import WhisperModel as FasterWhisperModel
+
+    _FASTER_WHISPER_AVAILABLE = True
+    logger.debug("transcriber: faster-whisper backend available")
+except ImportError:
+    logger.debug("transcriber: faster-whisper not available, will use pywhispercpp")
 
 
 @dataclass
@@ -55,7 +66,11 @@ class TranscriptionResult:
 class WhisperTranscriber:
     """Whisper-based transcriber with lazy model loading.
 
-    Loads the pywhispercpp model on first use to avoid startup delay.
+    Supports two backends:
+    - "faster-whisper": CTranslate2-based, with native CUDA/GPU support.
+    - "pywhispercpp": whisper.cpp-based, CPU fallback.
+
+    Loads the model on first use to avoid startup delay.
     Uses config settings for model name and device.
     """
 
@@ -72,7 +87,7 @@ class WhisperTranscriber:
                 If None, uses config setting.
             device: Device to run on ("cuda" or "cpu").
                 If None, uses config setting.
-            compute_type: Compute type for inference (kept for compatibility).
+            compute_type: Compute type for inference.
                 If None, uses config setting.
         """
         # Load config for defaults
@@ -91,7 +106,10 @@ class WhisperTranscriber:
         self._device, self._compute_type = resolve_device(config_device, config_compute)
         self._n_threads = get_optimal_threads()
 
-        # Language setting (auto = None for whisper.cpp)
+        # Select backend
+        self._backend = "faster-whisper" if _FASTER_WHISPER_AVAILABLE else "pywhispercpp"
+
+        # Language setting (auto = None)
         lang = model_config.get("language", "auto")
         self._language = None if lang == "auto" else lang
 
@@ -100,23 +118,23 @@ class WhisperTranscriber:
         self._hotwords = vocab_config.get("words", [])
 
         # Lazy-loaded model
-        self._model: WhisperModel | None = None
+        self._model: Any = None
 
         logger.info(
-            "transcriber: initialized model=%s device=%s threads=%d",
+            "transcriber: initialized model=%s device=%s backend=%s threads=%d",
             self._model_name,
             self._device,
+            self._backend,
             self._n_threads,
         )
 
-    def _load_model(self) -> "WhisperModel":
-        """Load the Whisper model.
+    def _load_model(self) -> Any:
+        """Load the Whisper model using the active backend.
 
         Returns:
-            Loaded pywhispercpp Model instance.
+            Loaded model instance (FasterWhisperModel or pywhispercpp Model).
         """
-        from pywhispercpp.model import Model
-        from localwispr.transcribe.model_manager import get_model_path, is_model_downloaded
+        from localwispr.transcribe.model_manager import is_model_downloaded
 
         # Check if model is downloaded
         if not is_model_downloaded(self._model_name):
@@ -125,29 +143,75 @@ class WhisperTranscriber:
                 "Please download it first using the settings window."
             )
 
-        model_path = get_model_path(self._model_name)
-        logger.info("transcriber: loading model from %s", model_path)
+        if self._backend == "faster-whisper":
+            return self._load_faster_whisper_model()
+        else:
+            return self._load_pywhispercpp_model()
 
-        # Create model with appropriate settings
-        # pywhispercpp handles GPU automatically if compiled with CUDA support
+    def _load_faster_whisper_model(self) -> Any:
+        """Load model using faster-whisper (CTranslate2) backend.
+
+        Returns:
+            Loaded FasterWhisperModel instance.
+        """
+        from faster_whisper import WhisperModel as FWModel
+
+        # Resolve compute_type for CTranslate2
+        compute_type = self._compute_type
+        if compute_type in ("default", "auto"):
+            compute_type = "float16" if self._device == "cuda" else "int8"
+
+        logger.info(
+            "transcriber: loading faster-whisper model=%s device=%s compute_type=%s",
+            self._model_name,
+            self._device,
+            compute_type,
+        )
+
+        model = FWModel(
+            self._model_name,
+            device=self._device,
+            compute_type=compute_type,
+        )
+
+        logger.info("transcriber: faster-whisper model loaded successfully")
+        return model
+
+    def _load_pywhispercpp_model(self) -> Any:
+        """Load model using pywhispercpp (whisper.cpp) backend.
+
+        Returns:
+            Loaded pywhispercpp Model instance.
+        """
+        from pywhispercpp.model import Model
+        from localwispr.transcribe.model_manager import get_model_path
+
+        model_path = get_model_path(self._model_name)
+        logger.info("transcriber: loading pywhispercpp model from %s", model_path)
+
         model = Model(
             model=str(model_path),
             n_threads=self._n_threads,
         )
 
-        logger.info("transcriber: model loaded successfully")
+        logger.info("transcriber: pywhispercpp model loaded successfully")
         return model
 
     @property
-    def model(self) -> "WhisperModel":
+    def model(self) -> Any:
         """Get the Whisper model, loading it if necessary.
 
         Returns:
-            The loaded pywhispercpp Model instance.
+            The loaded model instance.
         """
         if self._model is None:
             self._model = self._load_model()
         return self._model
+
+    @property
+    def backend(self) -> str:
+        """Get the active backend name."""
+        return self._backend
 
     @property
     def model_name(self) -> str:
@@ -198,6 +262,21 @@ class WhisperTranscriber:
 
         return temp_path
 
+    def _build_initial_prompt(self, initial_prompt: str | None) -> str | None:
+        """Build the initial prompt including hotwords.
+
+        Args:
+            initial_prompt: Optional user-provided prompt.
+
+        Returns:
+            Combined prompt string, or None if no prompt/hotwords.
+        """
+        if self._hotwords and not initial_prompt:
+            return " ".join(self._hotwords)
+        elif self._hotwords and initial_prompt:
+            return initial_prompt + " " + " ".join(self._hotwords)
+        return initial_prompt
+
     def transcribe(
         self,
         audio: np.ndarray,
@@ -213,41 +292,171 @@ class WhisperTranscriber:
                 Should be in range [-1, 1].
             beam_size: Beam size for decoding. Higher is more accurate but slower.
             vad_filter: If True, use voice activity detection to skip silence.
-                (Note: pywhispercpp has its own VAD handling)
             initial_prompt: Optional prompt to guide transcription with domain vocabulary.
 
         Returns:
             TranscriptionResult with text and timing information.
         """
-        # Calculate audio duration (assuming 16kHz sample rate)
+        audio_duration = len(audio) / WHISPER_SAMPLE_RATE
+        logger.debug(
+            "transcribe: backend=%s shape=%s duration=%.2fs min=%.4f max=%.4f mean_abs=%.4f",
+            self._backend,
+            audio.shape,
+            audio_duration,
+            float(np.min(audio)),
+            float(np.max(audio)),
+            float(np.mean(np.abs(audio))),
+        )
+        if self._backend == "faster-whisper":
+            return self._transcribe_faster_whisper(
+                audio, beam_size=beam_size, vad_filter=vad_filter,
+                initial_prompt=initial_prompt,
+            )
+        else:
+            return self._transcribe_pywhispercpp(
+                audio, initial_prompt=initial_prompt,
+            )
+
+    def _transcribe_faster_whisper(
+        self,
+        audio: np.ndarray,
+        *,
+        beam_size: int = 5,
+        vad_filter: bool = True,
+        initial_prompt: str | None = None,
+    ) -> TranscriptionResult:
+        """Transcribe using faster-whisper (CTranslate2) backend.
+
+        faster-whisper accepts numpy arrays directly — no temp file needed.
+        """
+        audio_duration = len(audio) / WHISPER_SAMPLE_RATE
+
+        start_time = time.perf_counter()
+
+        prompt = self._build_initial_prompt(initial_prompt)
+
+        # Build kwargs for faster-whisper
+        transcribe_kwargs: dict[str, Any] = {
+            "beam_size": beam_size,
+            "vad_filter": vad_filter,
+        }
+
+        if self._language:
+            transcribe_kwargs["language"] = self._language
+
+        if prompt:
+            transcribe_kwargs["initial_prompt"] = prompt
+
+        if self._hotwords:
+            transcribe_kwargs["hotwords"] = " ".join(self._hotwords)
+
+        logger.debug(
+            "faster_whisper: audio dtype=%s shape=%s min=%.4f max=%.4f mean_abs=%.4f",
+            audio.dtype,
+            audio.shape,
+            float(np.min(audio)),
+            float(np.max(audio)),
+            float(np.mean(np.abs(audio))),
+        )
+        logger.debug("faster_whisper: transcribe_kwargs=%s", transcribe_kwargs)
+
+        # faster-whisper accepts numpy array directly
+        try:
+            segments_iter, _info = self.model.transcribe(audio, **transcribe_kwargs)
+        except RuntimeError as e:
+            err_msg = str(e).lower()
+            if "cublas" in err_msg or "cudnn" in err_msg or "library" in err_msg:
+                logger.error(
+                    "faster_whisper: CUDA library missing: %s — GPU inference unavailable", e
+                )
+            raise
+
+        logger.debug(
+            "faster_whisper: info language=%s language_prob=%.3f duration=%.2fs",
+            getattr(_info, "language", "?"),
+            getattr(_info, "language_probability", 0.0),
+            getattr(_info, "duration", 0.0),
+        )
+
+        # Collect segments and build full text
+        segment_list = []
+        text_parts = []
+
+        for segment in segments_iter:
+            # faster-whisper Segment has: .start, .end, .text (times in seconds)
+            segment_list.append({
+                "start": segment.start,
+                "end": segment.end,
+                "text": segment.text,
+            })
+            text_parts.append(segment.text)
+            logger.debug(
+                "faster_whisper: segment [%.2f-%.2f] text=%r",
+                segment.start,
+                segment.end,
+                segment.text[:80] if segment.text else "",
+            )
+
+        inference_time = time.perf_counter() - start_time
+
+        if not segment_list:
+            logger.warning(
+                "faster_whisper: ZERO segments returned — audio may be silence or VAD filtered all speech"
+            )
+
+        text = "".join(text_parts).strip()
+
+        logger.debug(
+            "faster_whisper: result segments=%d text_len=%d inference=%.2fs",
+            len(segment_list),
+            len(text),
+            inference_time,
+        )
+
+        return TranscriptionResult(
+            text=text,
+            segments=segment_list,
+            inference_time=inference_time,
+            audio_duration=audio_duration,
+        )
+
+    def _transcribe_pywhispercpp(
+        self,
+        audio: np.ndarray,
+        *,
+        initial_prompt: str | None = None,
+    ) -> TranscriptionResult:
+        """Transcribe using pywhispercpp (whisper.cpp) backend.
+
+        pywhispercpp requires a WAV file path.
+        """
         audio_duration = len(audio) / WHISPER_SAMPLE_RATE
 
         # Write audio to temp file for pywhispercpp
         temp_path = self._audio_to_temp_wav(audio)
 
         try:
-            # Run inference with timing
             start_time = time.perf_counter()
 
             # Build transcribe kwargs for pywhispercpp
-            transcribe_kwargs = {}
+            transcribe_kwargs: dict[str, Any] = {}
 
-            # Add language if specified (None/empty = auto-detect)
             if self._language:
                 transcribe_kwargs["language"] = self._language
 
-            # Add initial prompt if specified
-            if initial_prompt:
-                transcribe_kwargs["initial_prompt"] = initial_prompt
+            prompt = self._build_initial_prompt(initial_prompt)
+            if prompt:
+                transcribe_kwargs["initial_prompt"] = prompt
 
-            # Add hotwords to initial prompt if configured
-            if self._hotwords and not initial_prompt:
-                transcribe_kwargs["initial_prompt"] = " ".join(self._hotwords)
-            elif self._hotwords and initial_prompt:
-                # Append hotwords to the existing prompt
-                transcribe_kwargs["initial_prompt"] = (
-                    initial_prompt + " " + " ".join(self._hotwords)
-                )
+            logger.debug(
+                "pywhispercpp: audio dtype=%s shape=%s min=%.4f max=%.4f mean_abs=%.4f",
+                audio.dtype,
+                audio.shape,
+                float(np.min(audio)),
+                float(np.max(audio)),
+                float(np.mean(np.abs(audio))),
+            )
+            logger.debug("pywhispercpp: transcribe_kwargs=%s", transcribe_kwargs)
 
             # Transcribe using pywhispercpp
             segments = self.model.transcribe(temp_path, **transcribe_kwargs)
@@ -268,8 +477,19 @@ class WhisperTranscriber:
                 })
                 text_parts.append(segment.text)
 
-            # Join text parts
+            if not segment_list:
+                logger.warning(
+                    "pywhispercpp: ZERO segments returned — audio may be silence"
+                )
+
             text = "".join(text_parts).strip()
+
+            logger.debug(
+                "pywhispercpp: result segments=%d text_len=%d inference=%.2fs",
+                len(segment_list),
+                len(text),
+                inference_time,
+            )
 
             return TranscriptionResult(
                 text=text,

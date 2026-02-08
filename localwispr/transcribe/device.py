@@ -53,12 +53,17 @@ def resolve_device(config_device: str, config_compute: str) -> tuple[str, str]:
     else:
         actual_device = "cpu"
 
-    # For whisper.cpp, compute_type is less relevant as it uses GGML quantization
-    # Keep the interface for config compatibility
+    # Resolve compute_type
+    # For faster-whisper (CTranslate2), compute_type is meaningful
+    # For pywhispercpp (whisper.cpp), it uses GGML quantization internally
     if config_compute == "auto":
-        actual_compute = "default"
+        if actual_device == "cuda":
+            actual_compute = "float16"
+        else:
+            actual_compute = "int8"
         logger.debug(
-            "compute_type: auto-resolved to default for device %s",
+            "compute_type: auto-resolved to %s for device %s",
+            actual_compute,
             actual_device,
         )
     else:
