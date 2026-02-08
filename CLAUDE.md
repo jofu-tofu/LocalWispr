@@ -106,6 +106,12 @@ Solution: Use `build.bat test`, not direct PyInstaller commands
 @echo off
 set BUILD_VARIANT=test
 cd /d C:\Users\fujos\LocalWispr
+REM Fail fast if target EXE is running
+tasklist /FI "IMAGENAME eq LocalWispr-Test.exe" 2>nul | findstr /i "LocalWispr-Test.exe" >nul
+if not errorlevel 1 (
+    echo BUILD ABORTED: LocalWispr-Test.exe is running. Close it first.
+    exit /b 1
+)
 .venv\Scripts\python.exe -m PyInstaller --noconfirm localwispr.spec
 copy config-test.toml dist\LocalWispr-Test\config-defaults.toml
 ```

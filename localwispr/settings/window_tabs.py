@@ -10,7 +10,18 @@ import logging
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from pynput import keyboard
+from pynput.keyboard import Key
+
 logger = logging.getLogger(__name__)
+
+# Modifier key mapping: pynput key -> canonical name
+_KEY_TO_MODIFIER: dict[Key, str] = {
+    Key.cmd: "win", Key.cmd_l: "win", Key.cmd_r: "win",
+    Key.ctrl: "ctrl", Key.ctrl_l: "ctrl", Key.ctrl_r: "ctrl",
+    Key.shift: "shift", Key.shift_l: "shift", Key.shift_r: "shift",
+    Key.alt: "alt", Key.alt_l: "alt", Key.alt_r: "alt", Key.alt_gr: "alt",
+}
 
 
 class TabsMixin:
@@ -46,9 +57,12 @@ class TabsMixin:
             value="toggle",
         ).pack(anchor=tk.W)
 
-        # Hotkey display (read-only for now)
-        hotkey_frame = ttk.LabelFrame(tab, text="Hotkey", padding="10")
+        # Hotkey section
+        hotkey_frame = ttk.LabelFrame(tab, text="Hotkeys", padding="10")
         hotkey_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # --- Recording Hotkey ---
+        ttk.Label(hotkey_frame, text="Recording Hotkey:").pack(anchor=tk.W)
 
         self._hotkey_label = ttk.Label(
             hotkey_frame,
@@ -57,11 +71,33 @@ class TabsMixin:
         )
         self._hotkey_label.pack(anchor=tk.W)
 
-        ttk.Label(
+        self._record_btn = ttk.Button(
+            hotkey_frame, text="Record", width=8,
+            command=lambda: self._toggle_record_btn("recording"),
+        )
+        self._record_btn.pack(anchor=tk.W, pady=(2, 8))
+
+        # --- Mode Cycle Hotkey ---
+        ttk.Label(hotkey_frame, text="Mode Cycle Hotkey:").pack(anchor=tk.W)
+
+        self._mode_cycle_label = ttk.Label(
             hotkey_frame,
-            text="(Edit config.toml to change hotkey)",
-            foreground="gray",
-        ).pack(anchor=tk.W)
+            text="Current: (loading...)",
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        self._mode_cycle_label.pack(anchor=tk.W)
+
+        self._mc_record_btn = ttk.Button(
+            hotkey_frame, text="Record", width=8,
+            command=lambda: self._toggle_record_btn("mode_cycle"),
+        )
+        self._mc_record_btn.pack(anchor=tk.W, pady=(2, 0))
+
+        # Initialize recording state
+        self._recording_target: str | None = None
+        self._recorded_keys: set[str] = set()
+        self._original_modifiers: tuple[str, ...] = ()
+        self._key_listener: keyboard.Listener | None = None
 
         # Audio Feedback section
         audio_frame = ttk.LabelFrame(tab, text="Audio", padding="10")
@@ -133,6 +169,185 @@ class TabsMixin:
             justify=tk.LEFT,
             wraplength=380,
         ).pack(anchor=tk.W, pady=(2, 0))
+
+    # --- Key Recorder Methods ---
+
+    def _toggle_record_btn(self, target: str) -> None:
+        """Toggle between Record and Stop for a hotkey button.
+
+        Args:
+            target: "recording" for recording hotkey, "mode_cycle" for mode cycle.
+        """
+        if self._recording_target == target:
+            # Currently recording this target — stop
+            self._stop_recording(target)
+        else:
+            # Not recording this target — start
+            self._start_recording(target)
+
+    def _start_recording(self, target: str) -> None:
+        """Start recording a hotkey combination.
+
+        Args:
+            target: "recording" for recording hotkey, "mode_cycle" for mode cycle.
+        """
+        # Cancel any existing recording first
+        if self._recording_target is not None:
+            self._cancel_recording()
+
+        self._recording_target = target
+
+        # Save original modifiers for restore on cancel
+        if target == "recording":
+            self._original_modifiers = tuple(
+                m.strip() for m in self._vars["hotkey_modifiers"].get().split(",") if m.strip()
+            )
+        else:
+            self._original_modifiers = tuple(
+                m.strip() for m in self._vars["mode_cycle_modifiers"].get().split(",") if m.strip()
+            )
+
+        self._recorded_keys = set()
+
+        # Update UI: button becomes "Stop", show prompt
+        if target == "recording":
+            self._record_btn.config(text="Stop")
+            self._hotkey_label.config(text="Press keys...")
+        else:
+            self._mc_record_btn.config(text="Stop")
+            self._mode_cycle_label.config(text="Press keys...")
+
+        # Suppress global hotkeys while recording keybinds
+        from localwispr.hotkeys import suppress_hotkeys
+        suppress_hotkeys()
+
+        # Start pynput listener
+        self._key_listener = keyboard.Listener(on_press=self._on_record_key_press)
+        self._key_listener.start()
+
+        logger.debug("keybind_recorder: started recording for %s", target)
+
+    def _stop_recording(self, target: str) -> None:
+        """Stop recording and validate the result.
+
+        Args:
+            target: "recording" or "mode_cycle".
+        """
+        if self._recording_target != target:
+            return
+
+        recorded = self._recorded_keys.copy()
+
+        # Validate: minimum 2 modifiers
+        if len(recorded) < 2:
+            messagebox.showwarning(
+                "Invalid Hotkey",
+                "At least 2 modifier keys required.\nKeep recording or cancel.",
+            )
+            return
+
+        # Valid — save to StringVar and update label
+        modifiers_str = ",".join(sorted(recorded))
+        label_str = " + ".join(mod.capitalize() for mod in sorted(recorded))
+
+        if target == "recording":
+            self._vars["hotkey_modifiers"].set(modifiers_str)
+            self._hotkey_label.config(text=f"Current: {label_str}")
+        else:
+            self._vars["mode_cycle_modifiers"].set(modifiers_str)
+            self._mode_cycle_label.config(text=f"Current: {label_str}")
+
+        self._finish_recording()
+
+        # Notify controller of change
+        if self.on_setting_changed is not None:
+            self.on_setting_changed(f"{target}_modifiers", None)
+
+        logger.debug("keybind_recorder: saved %s = %s", target, modifiers_str)
+
+    def _cancel_recording(self) -> None:
+        """Cancel recording and restore original modifiers."""
+        if self._recording_target is None:
+            return
+
+        target = self._recording_target
+        original_str = " + ".join(mod.capitalize() for mod in self._original_modifiers)
+
+        if target == "recording":
+            self._hotkey_label.config(text=f"Current: {original_str}")
+        else:
+            self._mode_cycle_label.config(text=f"Current: {original_str}")
+
+        self._finish_recording()
+        logger.debug("keybind_recorder: cancelled recording for %s", target)
+
+    def _finish_recording(self) -> None:
+        """Clean up recording state (shared by stop and cancel)."""
+        # Re-enable global hotkeys
+        from localwispr.hotkeys import unsuppress_hotkeys
+        unsuppress_hotkeys()
+
+        # Stop pynput listener
+        if self._key_listener is not None:
+            try:
+                self._key_listener.stop()
+            except Exception:
+                pass
+            self._key_listener = None
+
+        target = self._recording_target
+        self._recording_target = None
+        self._recorded_keys = set()
+
+        # Reset button text back to "Record"
+        if target == "recording":
+            self._record_btn.config(text="Record")
+        elif target == "mode_cycle":
+            self._mc_record_btn.config(text="Record")
+
+    def _on_record_key_press(self, key: Key | keyboard.KeyCode | None) -> None:
+        """Handle key press during recording (runs on pynput thread).
+
+        Args:
+            key: The key that was pressed.
+        """
+        if key is None:
+            return
+
+        # Map to modifier name
+        modifier = _KEY_TO_MODIFIER.get(key)
+        if modifier is None:
+            # Also check vk for Windows key
+            if hasattr(key, 'vk') and key.vk in (0x5B, 0x5C):
+                modifier = "win"
+            else:
+                return
+
+        self._recorded_keys.add(modifier)
+
+        # Schedule UI update on main thread
+        if self._root is not None:
+            self._root.after(0, self._update_recording_label)
+
+    def _update_recording_label(self) -> None:
+        """Update the label to show currently recorded keys (main thread)."""
+        if self._recording_target is None:
+            return
+
+        if self._recorded_keys:
+            label_str = " + ".join(mod.capitalize() for mod in sorted(self._recorded_keys))
+        else:
+            label_str = "Press keys..."
+
+        if self._recording_target == "recording":
+            self._hotkey_label.config(text=label_str)
+        else:
+            self._mode_cycle_label.config(text=label_str)
+
+    def _on_tab_changed(self, event=None) -> None:
+        """Handle notebook tab change — cancel active recording."""
+        if self._recording_target is not None:
+            self._cancel_recording()
 
     def _create_vocabulary_tab(self, notebook: ttk.Notebook) -> None:
         """Create the Vocabulary settings tab.

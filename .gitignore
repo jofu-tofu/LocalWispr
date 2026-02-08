@@ -46,3 +46,7 @@ _output/
 
 # Windows artifacts
 nul
+
+# Build logs and temp scripts
+build_*.txt
+run_build.bat

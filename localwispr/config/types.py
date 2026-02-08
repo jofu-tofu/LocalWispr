@@ -12,13 +12,14 @@ class ModelConfig(TypedDict, total=False):
     language: str  # Optional language code for transcription
 
 
-class HotkeyConfig(TypedDict):
+class HotkeyConfig(TypedDict, total=False):
     """Hotkey configuration settings."""
 
     mode: str  # "push-to-talk" or "toggle"
     modifiers: list[str]  # ["win", "ctrl", "shift"]
     audio_feedback: bool
     mute_system: bool  # Mute system audio during recording
+    mode_cycle_modifiers: list[str]  # ["win", "ctrl", "alt"]
 
 
 class ContextConfig(TypedDict):
@@ -79,6 +80,7 @@ DEFAULT_CONFIG: Config = {
         "modifiers": ["win", "ctrl", "shift"],
         "audio_feedback": True,
         "mute_system": False,
+        "mode_cycle_modifiers": ["win", "ctrl", "alt"],
     },
     "vocabulary": {
         "words": [],

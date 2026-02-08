@@ -14,11 +14,74 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     pass  # Future type imports
 
-
 class AudioRecorderError(Exception):
     """Exception raised for audio recording errors."""
 
     pass
+
+
+# Module-level device info cache (thread-safe, idempotent)
+_device_cache: dict[str, Any] | None = None
+_device_cache_lock = threading.Lock()
+
+
+def warmup_device_info(device=None) -> dict[str, Any]:
+    """Query and cache default device info for fast first-record startup.
+
+    Thread-safe and idempotent. Multiple concurrent callers are safe;
+    only the first caller does the actual query.
+
+    Args:
+        device: Specific device to query. None queries the default input device.
+
+    Returns:
+        Device info dictionary from sounddevice.
+    """
+    global _device_cache
+
+    if device is not None:
+        # Don't cache non-default devices
+        return _query_device_info(device)
+
+    with _device_cache_lock:
+        if _device_cache is not None:
+            return _device_cache
+        info = _query_device_info(None)
+        _device_cache = info
+        logger.info("warmup: device info cached (device=%s)", info.get("name", "unknown"))
+        return info
+
+
+def invalidate_device_cache() -> None:
+    """Clear cached device info. Call when audio settings change."""
+    global _device_cache
+    with _device_cache_lock:
+        _device_cache = None
+    logger.debug("warmup: device cache invalidated")
+
+
+def _query_device_info(device) -> dict[str, Any]:
+    """Query device info from sounddevice.
+
+    Args:
+        device: Device index/name, or None for default input.
+
+    Returns:
+        Device info dictionary.
+
+    Raises:
+        AudioRecorderError: If device cannot be found or accessed.
+    """
+    try:
+        if device is None:
+            device_index = sd.default.device[0]
+            if device_index is None:
+                device_index = sd.query_devices(kind="input")["index"]
+            return sd.query_devices(device_index)
+        else:
+            return sd.query_devices(device)
+    except Exception as e:
+        raise AudioRecorderError(f"Failed to get device info: {e}") from e
 
 
 class AudioRecorder:
@@ -63,23 +126,16 @@ class AudioRecorder:
     def _get_device_info(self) -> dict[str, Any]:
         """Get information about the input device.
 
+        Uses cached info for the default device (populated by warmup_device_info),
+        fresh query for specific devices.
+
         Returns:
             Device info dictionary from sounddevice.
 
         Raises:
             AudioRecorderError: If device cannot be found or accessed.
         """
-        try:
-            if self._device is None:
-                # Get default input device
-                device_index = sd.default.device[0]
-                if device_index is None:
-                    device_index = sd.query_devices(kind="input")["index"]
-                return sd.query_devices(device_index)
-            else:
-                return sd.query_devices(self._device)
-        except Exception as e:
-            raise AudioRecorderError(f"Failed to get device info: {e}") from e
+        return warmup_device_info(self._device)
 
     def _audio_callback(
         self,

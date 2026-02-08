@@ -29,6 +29,24 @@ logger = logging.getLogger(__name__)
 # Valid modifier names that can be used in config
 VALID_MODIFIERS = {"win", "ctrl", "shift", "alt"}
 
+# Module-level suppression flag — when True, chord activations are ignored.
+# Used by the keybind recorder to prevent hotkeys from firing during recording.
+_hotkeys_suppressed = False
+
+
+def suppress_hotkeys() -> None:
+    """Suppress all hotkey chord activations (recording + mode cycle)."""
+    global _hotkeys_suppressed
+    _hotkeys_suppressed = True
+    logger.debug("hotkey: suppressed")
+
+
+def unsuppress_hotkeys() -> None:
+    """Re-enable hotkey chord activations."""
+    global _hotkeys_suppressed
+    _hotkeys_suppressed = False
+    logger.debug("hotkey: unsuppressed")
+
 
 class HotkeyListenerError(Exception):
     """Exception raised when the hotkey listener fails to start.
@@ -91,7 +109,7 @@ class HotkeyListener:
     toggle (press to start/stop) modes.
 
     Default chord: Win+Ctrl+Shift (configurable via hotkeys.modifiers in config)
-    Mode cycle chord: Win+Ctrl+Alt (hardcoded)
+    Mode cycle chord: Win+Ctrl+Alt (configurable via hotkeys.mode_cycle_modifiers in config)
 
     The recording chord is read from config["hotkeys"]["modifiers"], allowing
     different builds to use different hotkeys (e.g., stable uses Win+Ctrl+Shift,
@@ -167,6 +185,21 @@ class HotkeyListener:
             logger.warning("hotkey: insufficient modifiers, using default Win+Ctrl+Shift")
             self._chord_modifiers = {"win", "ctrl", "shift"}
 
+        # Load mode cycle chord modifiers from config
+        mc_config = config["hotkeys"].get("mode_cycle_modifiers", ["win", "ctrl", "alt"])
+        self._mode_cycle_modifiers: set[str] = set()
+        for mod in mc_config:
+            mod_lower = mod.lower()
+            if mod_lower in VALID_MODIFIERS:
+                self._mode_cycle_modifiers.add(mod_lower)
+            else:
+                logger.warning("hotkey: ignoring invalid mode cycle modifier '%s'", mod)
+
+        # Default to Win+Ctrl+Alt if no valid modifiers
+        if len(self._mode_cycle_modifiers) < 2:
+            logger.warning("hotkey: insufficient mode cycle modifiers, using default Win+Ctrl+Alt")
+            self._mode_cycle_modifiers = {"win", "ctrl", "alt"}
+
         # Determine exclusion modifier (the one NOT in the chord that blocks activation)
         # This prevents accidental triggers when pressing 4 modifiers
         all_mods = {"win", "ctrl", "shift", "alt"}
@@ -174,9 +207,10 @@ class HotkeyListener:
         self._exclusion_modifier: str | None = excluded.pop() if len(excluded) == 1 else None
 
         logger.info(
-            "hotkey: configured chord=%s, exclusion=%s",
+            "hotkey: configured chord=%s, exclusion=%s, mode_cycle=%s",
             "+".join(sorted(self._chord_modifiers)),
             self._exclusion_modifier,
+            "+".join(sorted(self._mode_cycle_modifiers)),
         )
 
         # State machine
@@ -389,18 +423,27 @@ class HotkeyListener:
             return (now - oldest) < window_sec and (newest - oldest) < window_sec
 
     def _is_mode_chord_pressed(self) -> bool:
-        """Check if the mode cycle chord (Win+Ctrl+Alt) is pressed.
+        """Check if the mode cycle chord is pressed.
+
+        The chord modifiers are read from config (default: Win+Ctrl+Alt).
+        Modifiers NOT in the chord must NOT be pressed to avoid conflicts.
 
         Returns:
-            True if Win+Ctrl+Alt are pressed (but NOT Shift).
+            True if all configured mode cycle modifiers are pressed and others are not.
         """
         with self._modifier_lock:
-            return (
-                self._win_pressed
-                and self._ctrl_pressed
-                and self._alt_pressed
-                and not self._shift_pressed
-            )
+            # Check all required modifiers are pressed
+            for mod in self._mode_cycle_modifiers:
+                if not self._is_modifier_pressed(mod):
+                    return False
+
+            # Check non-required modifiers are NOT pressed (avoid conflicts)
+            all_mods = {"win", "ctrl", "shift", "alt"}
+            for mod in all_mods - self._mode_cycle_modifiers:
+                if self._is_modifier_pressed(mod):
+                    return False
+
+            return True
 
     def _on_key_press(self, key: Key | keyboard.KeyCode | None) -> None:
         """Handle key press events.
@@ -512,6 +555,10 @@ class HotkeyListener:
         In push-to-talk mode: Start recording.
         In toggle mode: Toggle recording state (with debounce).
         """
+        if _hotkeys_suppressed:
+            logger.debug("hotkey: chord suppressed, ignoring")
+            return
+
         if self._mode == HotkeyMode.PUSH_TO_TALK:
             self._transition_to_recording()
         else:
@@ -526,6 +573,10 @@ class HotkeyListener:
 
         Cycles through transcription modes with debounce.
         """
+        if _hotkeys_suppressed:
+            logger.debug("hotkey: mode chord suppressed, ignoring")
+            return
+
         current_time = time.time() * 1000  # Convert to milliseconds
         if current_time - self._last_mode_cycle_time >= self.MODE_CYCLE_DEBOUNCE_MS:
             self._last_mode_cycle_time = current_time

@@ -164,6 +164,41 @@ class RecordingPipeline:
                 return "error"
         return "loading"
 
+    def warmup_async(self) -> None:
+        """Warm up audio devices and VAD model in a background thread.
+
+        Opportunistic: if warmup finishes before first record, the cached
+        results are used (0ms). If not, the existing synchronous path runs
+        as before. No regressions possible.
+        """
+        thread = threading.Thread(
+            target=self._warmup,
+            daemon=True,
+        )
+        thread.start()
+        logger.info("pipeline: warmup thread started")
+
+    def _warmup(self) -> None:
+        """Background warmup of audio devices and optionally VAD model.
+
+        Failures are logged but non-fatal — the synchronous fallback
+        will run at first-record time if warmup didn't complete.
+        """
+        try:
+            from localwispr.audio.recorder import warmup_device_info
+
+            warmup_device_info()
+        except Exception as e:
+            logger.warning("warmup: device info failed (%s), will retry at record time", e)
+
+        try:
+            if self._check_streaming_enabled():
+                from localwispr.transcribe.streaming import warmup_vad_model
+
+                warmup_vad_model()
+        except Exception as e:
+            logger.warning("warmup: VAD model failed (%s), will retry at record time", e)
+
     def preload_model_async(self) -> None:
         """Start loading the Whisper model in a background thread.
 

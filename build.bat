@@ -124,6 +124,17 @@ if /i "%VARIANT%"=="test" (
     set "EXE_NAME=LocalWispr.exe"
 )
 
+REM Fail fast: check if target EXE is running
+tasklist /FI "IMAGENAME eq !EXE_NAME!" 2>nul | findstr /i "!EXE_NAME!" >nul
+if not errorlevel 1 (
+    echo.
+    echo ========================================
+    echo BUILD ABORTED: !EXE_NAME! is running.
+    echo Close it first, then retry.
+    echo ========================================
+    exit /b 1
+)
+
 REM Clean previous build for this variant only
 if exist "dist\%OUTPUT_FOLDER%" (
     echo Cleaning previous %VARIANT% build...

@@ -32,6 +32,49 @@ logger = logging.getLogger(__name__)
 # VAD model sample rate (Silero requires 16kHz)
 VAD_SAMPLE_RATE = 16000
 
+# Module-level VAD ONNX session cache (thread-safe, idempotent)
+_vad_session_cache = None
+_vad_session_lock = threading.Lock()
+
+
+def warmup_vad_model():
+    """Load and cache the Silero VAD ONNX session for fast first-record startup.
+
+    Thread-safe and idempotent. The ONNX session is stateless (hidden state
+    lives on VADProcessor instances), so sharing is safe.
+
+    Returns:
+        The cached ONNX InferenceSession.
+    """
+    global _vad_session_cache
+    with _vad_session_lock:
+        if _vad_session_cache is not None:
+            return _vad_session_cache
+        import os
+
+        import onnxruntime
+        from faster_whisper.vad import get_assets_path
+
+        path = os.path.join(get_assets_path(), "silero_vad_v6.onnx")
+        opts = onnxruntime.SessionOptions()
+        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = 1
+        opts.enable_cpu_mem_arena = False
+        opts.log_severity_level = 4
+        session = onnxruntime.InferenceSession(
+            path,
+            providers=["CPUExecutionProvider"],
+            sess_options=opts,
+        )
+        _vad_session_cache = session
+        logger.info("warmup: VAD model loaded")
+        return session
+
+
+def get_cached_vad_session():
+    """Return the cached VAD ONNX session, or None if not yet warmed up."""
+    return _vad_session_cache
+
 
 @dataclass
 class StreamingResult:
@@ -284,23 +327,11 @@ class VADProcessor:
         self._processed_samples = 0
 
     def _load_model(self):
-        """Load Silero VAD ONNX model from faster-whisper's bundled assets."""
-        import os
-
-        import onnxruntime
-        from faster_whisper.vad import get_assets_path
-
-        path = os.path.join(get_assets_path(), "silero_vad_v6.onnx")
-        opts = onnxruntime.SessionOptions()
-        opts.inter_op_num_threads = 1
-        opts.intra_op_num_threads = 1
-        opts.enable_cpu_mem_arena = False
-        opts.log_severity_level = 4
-        return onnxruntime.InferenceSession(
-            path,
-            providers=["CPUExecutionProvider"],
-            sess_options=opts,
-        )
+        """Load Silero VAD ONNX model, using cached session if available."""
+        cached = get_cached_vad_session()
+        if cached is not None:
+            return cached
+        return warmup_vad_model()
 
     @property
     def model(self):

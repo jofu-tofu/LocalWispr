@@ -879,6 +879,9 @@ class TrayApp:
             self._pipeline.preload_model_async()
             logger.info("model_preload: starting background preload")
 
+            # Warm up audio devices and VAD model in background
+            self._pipeline.warmup_async()
+
             # Start the hotkey listener
             try:
                 self._start_hotkey_listener()

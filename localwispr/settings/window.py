@@ -129,10 +129,17 @@ class TkinterSettingsView(TabsMixin, ModelManagerMixin):
             for word in settings.vocabulary_words:
                 self._vocab_listbox.insert(tk.END, word)
 
-        # Update hotkey display
+        # Update hotkey StringVars and display labels
+        self._vars["hotkey_modifiers"].set(",".join(settings.hotkey_modifiers))
+        self._vars["mode_cycle_modifiers"].set(",".join(settings.mode_cycle_modifiers))
+
         hotkey_str = " + ".join(mod.capitalize() for mod in settings.hotkey_modifiers)
         if hasattr(self, "_hotkey_label"):
             self._hotkey_label.config(text=f"Current: {hotkey_str}")
+
+        mc_str = " + ".join(mod.capitalize() for mod in settings.mode_cycle_modifiers)
+        if hasattr(self, "_mode_cycle_label"):
+            self._mode_cycle_label.config(text=f"Current: {mc_str}")
 
         # Update model manager display
         self._refresh_model_tree()
@@ -159,9 +166,14 @@ class TkinterSettingsView(TabsMixin, ModelManagerMixin):
             model_device=self._vars["device"].get(),
             model_compute_type=self._vars["compute_type"].get(),
             model_language=self._vars["language"].get(),
-            # Hotkeys (modifiers from original, mode from UI)
+            # Hotkeys (modifiers from recorder StringVars)
             hotkey_mode=self._vars["mode"].get(),
-            hotkey_modifiers=self._settings.hotkey_modifiers,  # Keep existing
+            hotkey_modifiers=tuple(
+                m.strip() for m in self._vars["hotkey_modifiers"].get().split(",") if m.strip()
+            ),
+            mode_cycle_modifiers=tuple(
+                m.strip() for m in self._vars["mode_cycle_modifiers"].get().split(",") if m.strip()
+            ),
             audio_feedback=self._vars["audio_feedback"].get(),
             mute_system=self._vars["mute_system"].get(),
             # Output
@@ -241,6 +253,10 @@ class TkinterSettingsView(TabsMixin, ModelManagerMixin):
 
     def close(self) -> None:
         """Close the settings window."""
+        # Cancel any active recording
+        if hasattr(self, "_recording_target") and self._recording_target is not None:
+            self._cancel_recording()
+
         if self._window is not None:
             self._window.destroy()
         if self._root is not None:
@@ -287,6 +303,7 @@ class TkinterSettingsView(TabsMixin, ModelManagerMixin):
         # Create notebook (tabbed interface)
         notebook = ttk.Notebook(main_frame)
         notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        self._notebook = notebook
 
         # Initialize variables before creating tabs
         self._init_variables()
@@ -295,6 +312,9 @@ class TkinterSettingsView(TabsMixin, ModelManagerMixin):
         self._create_general_tab(notebook)
         self._create_model_tab(notebook)
         self._create_vocabulary_tab(notebook)
+
+        # Bind tab change to cancel active recording
+        notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         # Create button frame with Save and Cancel buttons
         button_frame = ttk.Frame(main_frame)
@@ -343,6 +363,8 @@ class TkinterSettingsView(TabsMixin, ModelManagerMixin):
         self._vars["compute_type"] = tk.StringVar(master=self._root, value="float16")
         self._vars["language"] = tk.StringVar(master=self._root, value="auto")
         self._vars["streaming_enabled"] = tk.BooleanVar(master=self._root, value=False)
+        self._vars["hotkey_modifiers"] = tk.StringVar(master=self._root, value="win,ctrl,shift")
+        self._vars["mode_cycle_modifiers"] = tk.StringVar(master=self._root, value="win,ctrl,alt")
 
     def _setup_change_traces(self) -> None:
         """Set up trace callbacks on all tkinter variables for change detection."""

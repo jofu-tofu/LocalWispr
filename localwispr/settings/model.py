@@ -32,6 +32,7 @@ class SettingsSnapshot:
     # Hotkey settings
     hotkey_mode: str = "push-to-talk"
     hotkey_modifiers: tuple[str, ...] = ("win", "ctrl", "shift")
+    mode_cycle_modifiers: tuple[str, ...] = ("win", "ctrl", "alt")
     audio_feedback: bool = True
     mute_system: bool = False
 
@@ -74,6 +75,7 @@ class SettingsSnapshot:
             # Hotkeys
             hotkey_mode=hotkeys.get("mode", "push-to-talk"),
             hotkey_modifiers=tuple(hotkeys.get("modifiers", ["win", "ctrl", "shift"])),
+            mode_cycle_modifiers=tuple(hotkeys.get("mode_cycle_modifiers", ["win", "ctrl", "alt"])),
             audio_feedback=hotkeys.get("audio_feedback", True),
             mute_system=hotkeys.get("mute_system", False),
             # Output
@@ -105,6 +107,7 @@ class SettingsSnapshot:
             "hotkeys": {
                 "mode": self.hotkey_mode,
                 "modifiers": list(self.hotkey_modifiers),
+                "mode_cycle_modifiers": list(self.mode_cycle_modifiers),
                 "audio_feedback": self.audio_feedback,
                 "mute_system": self.mute_system,
             },
@@ -144,6 +147,7 @@ class SettingsSnapshot:
             "model_language": self.model_language,
             "hotkey_mode": self.hotkey_mode,
             "hotkey_modifiers": self.hotkey_modifiers,
+            "mode_cycle_modifiers": self.mode_cycle_modifiers,
             "audio_feedback": self.audio_feedback,
             "mute_system": self.mute_system,
             "auto_paste": self.auto_paste,
@@ -171,7 +175,8 @@ class SettingsSnapshot:
         changed = set()
         fields = [
             "model_name", "model_device", "model_compute_type", "model_language",
-            "hotkey_mode", "hotkey_modifiers", "audio_feedback", "mute_system",
+            "hotkey_mode", "hotkey_modifiers", "mode_cycle_modifiers",
+            "audio_feedback", "mute_system",
             "auto_paste", "paste_delay_ms", "vocabulary_words",
             "streaming_enabled", "streaming_min_silence_ms",
             "streaming_max_segment_duration", "streaming_min_segment_duration",
@@ -290,6 +295,21 @@ class SettingsValidator:
         if len(settings.hotkey_modifiers) < 2:
             result.add_error(
                 "hotkey_modifiers",
+                "At least 2 modifier keys required"
+            )
+
+        # Mode cycle modifiers validation
+        invalid_cycle_mods = set(settings.mode_cycle_modifiers) - VALID_MODIFIERS
+        if invalid_cycle_mods:
+            result.add_error(
+                "mode_cycle_modifiers",
+                f"Invalid modifiers: {', '.join(sorted(invalid_cycle_mods))}. "
+                f"Valid: {', '.join(sorted(VALID_MODIFIERS))}"
+            )
+
+        if len(settings.mode_cycle_modifiers) < 2:
+            result.add_error(
+                "mode_cycle_modifiers",
                 "At least 2 modifier keys required"
             )
 
