@@ -5,10 +5,10 @@
 name = "large-v3"
 
 # Device: cuda (GPU) or cpu
-device = "cuda"
+device = "cpu"
 
 # Compute type: float16 (GPU), int8 (CPU), or float32
-compute_type = "float16"
+compute_type = "int8"
 
 # Language: auto (auto-detect), en, es, fr, de, it, pt, nl, ru, zh, ja, ko
 language = "auto"
